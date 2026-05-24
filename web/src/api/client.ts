@@ -91,10 +91,40 @@ export const languages = {
     }),
 }
 
+export interface CreateVersionInput {
+  version: string
+  status?: string
+}
+
 export const versions = {
   listByLanguage: (languageId: string) =>
     request<LanguageVersion[]>(`/languages/${languageId}/versions`),
   get: (id: string) => request<LanguageVersion>(`/versions/${id}`),
+  create: (languageId: string, input: CreateVersionInput) =>
+    request<LanguageVersion>(`/languages/${languageId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+}
+
+export interface ExecuteInput {
+  version_id: string
+  code: string
+}
+
+export interface ExecuteOutput {
+  stdout: string
+  stderr: string
+  exit_code: number
+  duration_ms: number
+}
+
+export const execute = {
+  run: (input: ExecuteInput) =>
+    request<ExecuteOutput>('/execute', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
 }
 
 export interface LLMProvider {

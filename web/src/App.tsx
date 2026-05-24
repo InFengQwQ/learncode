@@ -5,6 +5,7 @@ import LanguagesPage from './pages/LanguagesPage'
 import LanguageDetailPage from './pages/LanguageDetailPage'
 import AddLanguagePage from './pages/AddLanguagePage'
 import SettingsPage from './pages/SettingsPage'
+import PlaygroundPage from './pages/PlaygroundPage'
 import NotFoundPage from './pages/NotFoundPage'
 
 function App() {
@@ -16,6 +17,7 @@ function App() {
         <Route path="/languages/add" element={<AddLanguagePage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/languages/:id" element={<LanguageDetailPage />} />
+        <Route path="/playground/:id" element={<PlaygroundPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

@@ -14,8 +14,11 @@ export default function LanguageDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState(false)
+  const [showAddVersion, setShowAddVersion] = useState(false)
+  const [newVersion, setNewVersion] = useState('')
+  const [addingVersion, setAddingVersion] = useState(false)
 
-  useEffect(() => {
+  function loadVersions() {
     if (!id) return
     Promise.all([
       languages.get(id),
@@ -31,6 +34,10 @@ export default function LanguageDetailPage() {
       }
       setLoading(false)
     })
+  }
+
+  useEffect(() => {
+    loadVersions()
   }, [id])
 
   async function handleDelete() {
@@ -48,6 +55,25 @@ export default function LanguageDetailPage() {
       setError('网络错误')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  async function handleAddVersion() {
+    if (!id || !newVersion.trim()) return
+    setAddingVersion(true)
+    try {
+      const res = await versions.create(id, { version: newVersion.trim() })
+      if (res.ok && res.data) {
+        setVers([...vers, res.data])
+        setNewVersion('')
+        setShowAddVersion(false)
+      } else {
+        setError(res.error ?? '创建版本失败')
+      }
+    } catch {
+      setError('网络错误')
+    } finally {
+      setAddingVersion(false)
     }
   }
 
@@ -154,13 +180,38 @@ export default function LanguageDetailPage() {
 
       {/* Versions section */}
       <div className="mt-10">
-        <h2 className="text-lg font-semibold">语言版本</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">语言版本</h2>
+          <Button variant="ghost" size="sm" onClick={() => setShowAddVersion(!showAddVersion)}>
+            + 添加版本
+          </Button>
+        </div>
+
+        {/* Add version form */}
+        {showAddVersion && (
+          <div className="mt-4 flex gap-3">
+            <input
+              type="text"
+              value={newVersion}
+              onChange={(e) => setNewVersion(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddVersion()}
+              placeholder="例如: 3.12, 21, 1.22"
+              className="flex-1 rounded-lg border border-stone-700 bg-stone-900 px-4 py-2.5 text-sm text-stone-100 placeholder-stone-500 transition-colors focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+            />
+            <Button
+              onClick={handleAddVersion}
+              disabled={addingVersion || !newVersion.trim()}
+            >
+              {addingVersion ? '创建中...' : '创建'}
+            </Button>
+          </div>
+        )}
+
         {vers.length === 0 ? (
           <div className="mt-4 rounded-xl border border-stone-800 bg-stone-900 px-6 py-8 text-center">
             <p className="text-sm text-stone-400">尚未配置任何版本。</p>
             <p className="mt-2 text-sm text-stone-500">
-              版本定义了该语言的运行时环境（容器镜像、编译器版本等），
-              后续将在此处添加和管理版本。
+              添加一个版本后即可在 Playground 中编写和运行代码。
             </p>
           </div>
         ) : (
@@ -173,7 +224,12 @@ export default function LanguageDetailPage() {
                     <Badge variant="success">就绪</Badge>
                   )}
                 </div>
-                <span className="text-xs text-stone-500">{v.status}</span>
+                <Link
+                  to={`/playground/${id}?version=${v.id}`}
+                  className="text-xs text-amber-500 transition-colors hover:text-amber-400"
+                >
+                  运行 &rarr;
+                </Link>
               </div>
             ))}
           </div>

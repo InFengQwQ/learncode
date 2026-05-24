@@ -73,6 +73,7 @@ func main() {
 	langHandler := &api.LanguageHandler{Svc: langSvc, InitSvc: initSvc}
 	versionHandler := &api.VersionHandler{Svc: versionSvc}
 	configHandler := &api.ConfigHandler{Cfg: cfg, Path: *configPath}
+	executeHandler := &api.ExecuteHandler{VersionRepo: versionRepo, LanguageRepo: langRepo}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/languages", langHandler.Routes)
@@ -81,6 +82,7 @@ func main() {
 			r.Get("/{versionId}", versionHandler.Get)
 		})
 		r.Route("/config", configHandler.Routes)
+		r.Route("/execute", executeHandler.Routes)
 	})
 
 	slog.Info("server starting", "port", cfg.Server.Port)
