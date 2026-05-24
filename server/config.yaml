@@ -1,0 +1,21 @@
+server:
+    port: 8080
+    cors_origins:
+        - http://localhost:5173
+database:
+    host: localhost
+    port: 5433
+    user: learncode
+    password: learncode
+    dbname: learncode
+    sslmode: disable
+storage:
+    root: ./storage
+llm:
+    default: deepseek
+    providers:
+        - name: DeepSeek
+          endpoint: https://api.deepseek.com/v1
+          models:
+            - deepseek-v4-flash
+          api_key: sk-71880f58dc9c40e589093861e0355cb0

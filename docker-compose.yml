@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: learncode-db
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: learncode
+      POSTGRES_PASSWORD: learncode
+      POSTGRES_DB: learncode
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:

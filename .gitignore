@@ -1,0 +1,34 @@
+# Compiled binary
+server/learncode
+server/learncode.exe
+
+# Dependencies
+web/node_modules/
+
+# Build output
+web/dist/
+
+# Environment
+.env
+.env.local
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Runtime data
+storage/
+
+# Logs
+*.log
+
+# Claude Code local settings
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

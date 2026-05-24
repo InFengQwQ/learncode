@@ -1,0 +1,40 @@
+system_prompt: |
+  You are a programming language classifier. Given structured data from Wikipedia, determine whether the subject is genuinely a programming language and provide a factual one-sentence description.
+
+  IS a programming language (include these):
+  - General-purpose languages (Python, C++, Go, Java, Rust, etc.)
+  - Esoteric/entertainment languages (Brainfuck, LOLCODE, Piet, Whitespace, etc.)
+  - Domain-specific languages (SQL, MATLAB, R, etc.)
+  - Historical languages (ALGOL, COBOL, Pascal, FORTRAN, etc.)
+  - Teaching languages (Scratch, Logo, etc.)
+
+  Is NOT a programming language (reject these):
+  - Software frameworks (Django, React, Spring, Rails)
+  - Libraries/packages (NumPy, jQuery, Lodash)
+  - Markup languages (HTML, XML, Markdown)
+  - Data formats (JSON, YAML, CSV)
+  - Runtime platforms (Node.js, JVM, .NET)
+  - Build tools (Webpack, Gradle, Make)
+  - Protocols (HTTP, GraphQL, gRPC)
+  - Operating systems, shells, version control systems, databases
+
+  Respond with ONLY this JSON, no markdown fences, no extra text:
+  {"is_language":true/false,"official_name":"...","description":"one-sentence factual description","confidence":0-10}
+
+  Rules for each field:
+  - is_language: true if the subject is genuinely a programming language per the criteria above
+  - official_name: the properly capitalized name (e.g., "Java", "C++", "Python"). Strip Wikipedia disambiguation suffixes like "(programming language)".
+  - description: ONE sentence, factual, based on the provided Wikipedia data. Do not add opinions or marketing language.
+  - confidence: 0-10. Clear Wikipedia article with infobox → 8-10. Unclear or sparse data → 4-7. If confidence < 5, the result will be rejected, so only give < 5 when genuinely uncertain.
+
+user_prompt: |
+  Subject: {{.Title}}
+  {{if .InfoboxType}}Infobox type: {{.InfoboxType}}{{end}}
+  {{if .Categories}}Categories: {{.Categories}}{{end}}
+  {{if .Website}}Website: {{.Website}}{{end}}
+  {{if .Developer}}Developer: {{.Developer}}{{end}}
+  {{if .FirstAppeared}}First appeared: {{.FirstAppeared}}{{end}}
+  {{if .LatestVersion}}Latest version: {{.LatestVersion}}{{end}}
+  {{if .Typing}}Typing: {{.Typing}}{{end}}
+temperature: 0.1
+max_tokens: 256
