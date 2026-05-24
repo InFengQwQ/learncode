@@ -90,7 +90,7 @@ export default function PlaygroundPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-sm text-stone-500">加载中...</p>
+        <p className="text-sm text-stone-500">加载中…</p>
       </div>
     )
   }
@@ -136,7 +136,7 @@ export default function PlaygroundPage() {
               disabled={running || vers.length === 0 || !code.trim()}
               size="sm"
             >
-              {running ? '运行中...' : '运行'}
+              {running ? '运行中…' : '运行'}
             </Button>
           </div>
 
@@ -144,7 +144,7 @@ export default function PlaygroundPage() {
             value={code}
             onChange={(e) => setCode(e.target.value)}
             className="w-full h-64 rounded-lg border border-stone-700 bg-stone-950 px-4 py-3 font-mono text-sm text-stone-100 placeholder-stone-500 transition-colors focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 resize-none"
-            placeholder="在此编写代码..."
+            placeholder="在此编写代码…"
             spellCheck={false}
           />
         </Card>
@@ -153,7 +153,7 @@ export default function PlaygroundPage() {
         <Card className="p-5">
           <h2 className="text-sm font-semibold text-stone-300 mb-4">输出</h2>
           <pre className="h-64 overflow-auto rounded-lg border border-stone-800 bg-stone-950 px-4 py-3 font-mono text-sm text-stone-300 whitespace-pre-wrap break-words">
-            {output || '点击"运行"查看输出...'}
+            {output || '点击"运行"查看输出…'}
           </pre>
         </Card>
       </div>

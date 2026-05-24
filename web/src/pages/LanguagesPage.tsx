@@ -26,7 +26,7 @@ export default function LanguagesPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-sm text-stone-500">加载中...</p>
+        <p className="text-sm text-stone-500">加载中…</p>
       </div>
     )
   }
@@ -67,7 +67,7 @@ export default function LanguagesPage() {
               <Card hover className="p-6 h-full">
                 <div className="flex items-center gap-3">
                   {lang.icon && isIconURL(lang.icon) ? (
-                    <img src={lang.icon} alt="" className="h-8 w-8 shrink-0 rounded-lg object-contain" />
+                    <img src={lang.icon} alt="" width={32} height={32} className="h-8 w-8 shrink-0 rounded-lg object-contain" />
                   ) : (
                     <span className="text-2xl">{lang.icon || '📄'}</span>
                   )}

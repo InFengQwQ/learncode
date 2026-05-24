@@ -76,14 +76,14 @@ export default function AddLanguagePage() {
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleQuery()}
-          placeholder="例如: python, rust, go..."
+          placeholder="例如: python, rust, go…"
           className="flex-1 rounded-lg border border-stone-700 bg-stone-900 px-4 py-2.5 text-sm text-stone-100 placeholder-stone-500 transition-colors focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
         />
         <Button
           onClick={handleQuery}
           disabled={querying || !name.trim()}
         >
-          {querying ? '搜索中...' : '查找语言'}
+          {querying ? '搜索中…' : '查找语言'}
         </Button>
       </div>
 
@@ -97,7 +97,7 @@ export default function AddLanguagePage() {
           {/* Header */}
           <div className="flex items-center gap-4 bg-stone-800/50 px-6 py-5">
             {suggestion.icon && isIconURL(suggestion.icon) ? (
-              <img src={suggestion.icon} alt="" className="h-12 w-12 shrink-0 rounded-lg object-contain" />
+              <img src={suggestion.icon} alt="" width={48} height={48} className="h-12 w-12 shrink-0 rounded-lg object-contain" />
             ) : (
               <span className="text-4xl">{suggestion.icon || '📄'}</span>
             )}
@@ -167,7 +167,7 @@ export default function AddLanguagePage() {
               disabled={confirming}
               className="flex-1"
             >
-              {confirming ? '创建中...' : '确认添加'}
+              {confirming ? '创建中…' : '确认添加'}
             </Button>
             <Button
               onClick={handleCancel}

@@ -80,7 +80,7 @@ export default function LanguageDetailPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-sm text-stone-500">加载中...</p>
+        <p className="text-sm text-stone-500">加载中…</p>
       </div>
     )
   }
@@ -106,7 +106,7 @@ export default function LanguageDetailPage() {
         <div className="flex items-start justify-between gap-6 bg-stone-800/50 px-6 py-5">
           <div className="flex items-center gap-4 min-w-0">
             {lang.icon && isIconURL(lang.icon) ? (
-              <img src={lang.icon} alt="" className="h-12 w-12 shrink-0 rounded-lg object-contain" />
+              <img src={lang.icon} alt="" width={48} height={48} className="h-12 w-12 shrink-0 rounded-lg object-contain" />
             ) : (
               <span className="text-4xl shrink-0">{lang.icon || '📄'}</span>
             )}
@@ -131,7 +131,7 @@ export default function LanguageDetailPage() {
             onClick={handleDelete}
             disabled={deleting}
           >
-            {deleting ? '删除中...' : '删除'}
+            {deleting ? '删除中…' : '删除'}
           </Button>
         </div>
 
@@ -202,7 +202,7 @@ export default function LanguageDetailPage() {
               onClick={handleAddVersion}
               disabled={addingVersion || !newVersion.trim()}
             >
-              {addingVersion ? '创建中...' : '创建'}
+              {addingVersion ? '创建中…' : '创建'}
             </Button>
           </div>
         )}

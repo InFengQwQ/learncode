@@ -3,7 +3,7 @@ import Button from '../components/ui/Button'
 export default function HomePage() {
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center">
-      <h1 className="max-w-4xl text-5xl font-bold leading-tight tracking-tight">
+      <h1 className="max-w-4xl text-5xl font-bold leading-tight tracking-tight text-pretty">
         掌握编程，
         <br />
         <span className="text-amber-500">一门语言接一门语言</span>
