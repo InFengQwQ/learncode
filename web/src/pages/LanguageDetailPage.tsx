@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { languages, versions, type Language, type LanguageVersion } from '../api/client'
+import { languages, versions, execute, type Language, type LanguageVersion } from '../api/client'
 import { formatDate, externalURL, isIconURL } from '../lib/utils'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
@@ -17,6 +17,12 @@ export default function LanguageDetailPage() {
   const [showAddVersion, setShowAddVersion] = useState(false)
   const [newVersion, setNewVersion] = useState('')
   const [addingVersion, setAddingVersion] = useState(false)
+
+  // Inline playground state
+  const [activeVersionId, setActiveVersionId] = useState('')
+  const [code, setCode] = useState('')
+  const [output, setOutput] = useState('')
+  const [running, setRunning] = useState(false)
 
   function loadVersions() {
     if (!id) return
@@ -74,6 +80,52 @@ export default function LanguageDetailPage() {
       setError('网络错误')
     } finally {
       setAddingVersion(false)
+    }
+  }
+
+  function openPlayground(versionId: string) {
+    setActiveVersionId(versionId)
+    setOutput('')
+    if (!code) {
+      // Set default code snippet based on language slug
+      switch (lang?.slug) {
+        case 'python':
+          setCode('print("Hello, World!")')
+          break
+        case 'javascript':
+        case 'node':
+        case 'nodejs':
+          setCode('console.log("Hello, World!");')
+          break
+        default:
+          setCode('// Write your code here')
+      }
+    }
+  }
+
+  async function handleRun() {
+    if (!activeVersionId || !code.trim()) return
+    setRunning(true)
+    setOutput('')
+    try {
+      const res = await execute.run({
+        version_id: activeVersionId,
+        code: code.trim(),
+      })
+      if (res.ok && res.data) {
+        const { stdout, stderr, exit_code, duration_ms } = res.data
+        let out = ''
+        if (stdout) out += stdout
+        if (stderr) out += (out ? '\n' : '') + stderr
+        out += `\n\n── 退出码: ${exit_code}  耗时: ${duration_ms}ms`
+        setOutput(out)
+      } else {
+        setOutput('执行失败: ' + (res.error ?? '未知错误'))
+      }
+    } catch {
+      setOutput('网络错误')
+    } finally {
+      setRunning(false)
     }
   }
 
@@ -211,25 +263,67 @@ export default function LanguageDetailPage() {
           <div className="mt-4 rounded-xl border border-stone-800 bg-stone-900 px-6 py-8 text-center">
             <p className="text-sm text-stone-400">尚未配置任何版本。</p>
             <p className="mt-2 text-sm text-stone-500">
-              添加一个版本后即可在 Playground 中编写和运行代码。
+              添加一个版本后即可编写和运行代码。
             </p>
           </div>
         ) : (
           <div className="mt-4 divide-y divide-stone-800 rounded-xl border border-stone-800">
             {vers.map((v) => (
-              <div key={v.id} className="flex items-center justify-between px-6 py-4">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-sm">{v.version}</span>
-                  {v.initialized && (
-                    <Badge variant="success">就绪</Badge>
-                  )}
-                </div>
-                <Link
-                  to={`/playground/${id}?version=${v.id}`}
-                  className="text-xs text-amber-500 transition-colors hover:text-amber-400"
+              <div key={v.id}>
+                <button
+                  className="flex w-full items-center justify-between px-6 py-4 text-left transition-colors hover:bg-stone-800/30"
+                  onClick={() => openPlayground(v.id)}
                 >
-                  运行 &rarr;
-                </Link>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm">{v.version}</span>
+                    {v.initialized && (
+                      <Badge variant="success">就绪</Badge>
+                    )}
+                  </div>
+                  <span className="text-xs text-amber-500">运行 &rarr;</span>
+                </button>
+
+                {/* Inline playground panel */}
+                {activeVersionId === v.id && (
+                  <div className="border-t border-stone-800 bg-stone-900/50 px-6 py-4">
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      {/* Code editor */}
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs font-medium text-stone-500">
+                            {lang.name} {v.version}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <Button onClick={handleRun} disabled={running || !code.trim()} size="sm">
+                              {running ? '运行中…' : '运行'}
+                            </Button>
+                            <button
+                              onClick={() => setActiveVersionId('')}
+                              className="text-xs text-stone-500 transition-colors hover:text-stone-300"
+                            >
+                              关闭
+                            </button>
+                          </div>
+                        </div>
+                        <textarea
+                          value={code}
+                          onChange={(e) => setCode(e.target.value)}
+                          className="w-full h-48 rounded-lg border border-stone-700 bg-stone-950 px-3 py-2.5 font-mono text-sm text-stone-100 transition-colors focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 resize-none"
+                          placeholder="在此编写代码…"
+                          spellCheck={false}
+                        />
+                      </div>
+
+                      {/* Output */}
+                      <div>
+                        <span className="text-xs font-medium text-stone-500">输出</span>
+                        <pre className="mt-3 h-48 overflow-auto rounded-lg border border-stone-800 bg-stone-950 px-3 py-2.5 font-mono text-sm text-stone-300 whitespace-pre-wrap break-words">
+                          {output || '点击"运行"查看输出…'}
+                        </pre>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
