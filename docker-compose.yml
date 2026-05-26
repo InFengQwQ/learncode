@@ -30,6 +30,7 @@ services:
       DATABASE_PASSWORD: learncode
       DATABASE_NAME: learncode
       STORAGE_ROOT: /tmp/learncode-storage
+      WIKI_PROXY: http://host.docker.internal:7654
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
