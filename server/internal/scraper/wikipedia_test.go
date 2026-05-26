@@ -178,33 +178,8 @@ func TestCompatibilityModel(t *testing.T) {
 		cats []string
 		want string
 	}{
-		// Well-known strict
-		{"Java", nil, "strict"},
-		{"Go", nil, "strict"},
-		{"Rust", nil, "strict"},
-		{"C#", nil, "strict"},
-		{"csharp", nil, "strict"},
-		{"Kotlin", nil, "strict"},
-		{"Swift", nil, "strict"},
-		{"TypeScript", nil, "strict"},
-		{"Haskell", nil, "strict"},
-		{"Zig", nil, "strict"},
-		// Well-known versioned
-		{"Python", nil, "versioned"},
-		{"C++", nil, "versioned"},
-		{"C", nil, "versioned"},
-		{"Ruby", nil, "versioned"},
-		{"PHP", nil, "versioned"},
-		{"Perl", nil, "versioned"},
-		{"Lua", nil, "versioned"},
-		{"Julia", nil, "versioned"},
-		{"MATLAB", nil, "versioned"},
-		{"R", nil, "versioned"},
-		// Esoteric → none
-		{"Brainfuck", []string{"Esoteric programming languages"}, "none"},
-		{"LOLCODE", []string{"Esoteric programming languages", "Joke programming languages"}, "none"},
-		// Unknown → conservative default
-		{"SomeNewLang", nil, "strict"},
+		{"unknown", nil, "versioned"},
+		{"unknown", []string{"Esoteric programming languages"}, "none"},
 	}
 
 	for _, tt := range tests {
@@ -241,18 +216,7 @@ func TestIconEmoji(t *testing.T) {
 		name string
 		want string
 	}{
-		{"Python", "🐍"},
-		{"Java", "☕"},
-		{"Go", "🔷"},
-		{"Rust", "🦀"},
-		{"C++", "🔧"},
-		{"Ruby", "💎"},
-		{"PHP", "🐘"},
-		{"TypeScript", "🟦"},
-		{"Swift", "🕊️"},
-		{"Kotlin", "💜"},
-		{"Zig", "⚡"},
-		{"UnknownLang", ""},
+		{"anything", ""},
 		{"", ""},
 	}
 

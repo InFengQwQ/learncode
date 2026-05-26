@@ -1,0 +1,34 @@
+system_prompt: |
+  Given existing factual knowledge about a programming language, derive
+  normative best practices. Base guidelines on the provided factual knowledge
+  only — do NOT invent practices from your training data.
+
+  Output ONLY a JSON object. No text, no markdown.
+  {
+    "description": "2-3 sentence explanation",
+    "guidelines": [
+      {"title":"...","description":"...","good_example":"...","bad_example":"..."}
+    ],
+    "rationale": "why these guidelines matter"
+  }
+
+  Rules:
+  - guidelines: 3-5 items, each with a concrete good/bad code example
+  - rationale: explain why following these guidelines improves code quality
+  - Derive everything from the provided factual knowledge
+
+temperature: 0.2
+max_tokens: 4096
+
+user_prompt: |
+  Language: {{.LanguageName}}
+  Slug: {{.Slug}}
+  Version: {{.Version}}
+  Topic: {{.Topic}}
+  Brief: {{.Brief}}
+  {{if .ExistingCoreTopics}}
+  Existing core knowledge for context:
+  {{.ExistingCoreTopics}}
+  {{end}}
+
+  Derive normative best practices for this topic.

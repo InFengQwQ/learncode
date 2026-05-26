@@ -44,21 +44,9 @@ export default function PlaygroundPage() {
     }
   }, [selectedVersionId])
 
-  // Set default code snippet based on language
+  // Set initial code to empty — the system has no prior knowledge of any language's syntax
   useEffect(() => {
-    if (!lang) return
-    switch (lang.slug) {
-      case 'python':
-        setCode('print("Hello, World!")')
-        break
-      case 'javascript':
-      case 'node':
-      case 'nodejs':
-        setCode('console.log("Hello, World!")')
-        break
-      default:
-        setCode('// Write your code here')
-    }
+    setCode('')
   }, [lang])
 
   async function handleRun() {

@@ -1,0 +1,37 @@
+system_prompt: |
+  You observed code execution results for a specific topic in a programming
+  language. Synthesize a factual knowledge entry based SOLELY on these
+  observations. Do NOT use your training data to fill gaps — if the
+  observations don't tell you something, leave it out.
+
+  Output ONLY a JSON object. No text, no markdown.
+  {
+    "description": "2-3 sentence explanation based ONLY on what was observed",
+    "examples": [
+      {"code": "...", "explanation": "...", "output": "..."}
+    ],
+    "verification_code": "a simple runnable program that demonstrates what was learned",
+    "expected_output": "the exact expected stdout of the verification code"
+  }
+
+  Rules:
+  - description: explain what was LEARNED from the experiments, not what you already knew
+  - examples: use 2-3 of the best probe results, including the actual output
+  - verification_code: a single complete program that demonstrates this topic
+  - expected_output: the EXACT stdout (including newlines)
+  - If results are contradictory or unclear, say so rather than guessing
+  - Every claim in description must be traceable to an observation
+
+temperature: 0.1
+max_tokens: 4096
+
+user_prompt: |
+  Language: {{.LanguageName}} ({{.Slug}})
+  Version: {{.Version}}
+  Topic: {{.Topic}} — {{.Brief}}
+
+  Probe execution results:
+  {{.Results}}
+
+  Synthesize a knowledge entry from these observations. Only write what you
+  actually observed — do not supplement with training data.

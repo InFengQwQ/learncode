@@ -12,6 +12,9 @@ type Language struct {
 	Icon               string          `db:"icon"                json:"icon"`
 	CompatibilityModel string          `db:"compatibility_model" json:"compatibility_model"`
 	SourceURLs         json.RawMessage `db:"source_urls"         json:"source_urls"`
+	ResearchData       *json.RawMessage `db:"research_data"       json:"research_data"`
+	ResearchedAt       *time.Time      `db:"researched_at"       json:"researched_at"`
+	Status             string          `db:"status"               json:"status"` // "inactive" | "active"
 	CreatedAt          time.Time       `db:"created_at"          json:"created_at"`
 }
 
@@ -24,6 +27,9 @@ type LanguageVersion struct {
 	SourceURLs         json.RawMessage `db:"source_urls"          json:"source_urls"`
 	LastVersionCheckAt *time.Time      `db:"last_version_check_at" json:"last_version_check_at,omitempty"`
 	Initialized        bool            `db:"initialized"          json:"initialized"`
+	Image              string          `db:"image"                json:"image"`
+	KBStatus           string          `db:"kb_status"            json:"kb_status"` // "pending" | "building" | "complete" | "failed"
+	InitializedAt      *time.Time      `db:"initialized_at"       json:"initialized_at"`
 	CreatedAt          time.Time       `db:"created_at"           json:"created_at"`
 	UpdatedAt          time.Time       `db:"updated_at"           json:"updated_at"`
 }

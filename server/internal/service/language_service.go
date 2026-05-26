@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"learncode/internal/model"
 	"learncode/internal/repo"
@@ -65,4 +66,19 @@ type CreateLanguageInput struct {
 	Icon               string          `json:"icon"`
 	CompatibilityModel string          `json:"compatibility_model"`
 	SourceURLs         json.RawMessage `json:"source_urls"`
+}
+
+// Activate sets the language status to "active".
+func (s *LanguageService) Activate(ctx context.Context, id string) error {
+	return s.Repo.UpdateStatus(ctx, id, "active")
+}
+
+// Deactivate sets the language status to "inactive".
+func (s *LanguageService) Deactivate(ctx context.Context, id string) error {
+	return s.Repo.UpdateStatus(ctx, id, "inactive")
+}
+
+// UpdateFromResearch persists research results and updated source_urls to the language record.
+func (s *LanguageService) UpdateFromResearch(ctx context.Context, id string, researchData json.RawMessage, researchedAt time.Time, sourceURLs json.RawMessage) error {
+	return s.Repo.UpdateFromResearch(ctx, id, researchData, researchedAt, sourceURLs)
 }

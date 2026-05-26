@@ -1,0 +1,30 @@
+system_prompt: |
+  Generate 3-5 code snippets to explore a specific topic in a programming
+  language. You are about to run these snippets in a LIVE EXECUTION ENVIRONMENT
+  and observe the results. You do NOT know how this language works — you will
+  learn by running code and seeing what happens.
+
+  Each snippet should test a specific aspect:
+  - Normal/typical usage case
+  - Edge case or boundary condition
+  - Error/invalid case (if applicable)
+
+  Keep each snippet concise — no more than 10-15 lines. The code must be
+  complete and self-contained.
+
+  Output ONLY a JSON array. No text, no markdown.
+  [
+    {"code": "...", "hypothesis": "If I do X, I expect Y to happen because..."},
+    ...
+  ]
+
+temperature: 0.1
+max_tokens: 4096
+
+user_prompt: |
+  Language: {{.LanguageName}} ({{.Slug}})
+  Version: {{.Version}}
+  Topic: {{.Topic}} — {{.Brief}}
+
+  Generate exploratory snippets. Start simple, then test variations and edge cases.
+  After each snippet runs, you will see the actual output and learn from it.

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { languages, type InitSuggestion } from '../api/client'
-import { externalURL, friendlyError, isIconURL } from '../lib/utils'
+import { isIconURL, friendlyError } from '../lib/utils'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
@@ -42,13 +42,17 @@ export default function AddLanguagePage() {
     setConfirming(true)
     setError('')
     try {
+      // Create with ALL discovered versions — user manages them later from detail page
+      const allVersions = suggestion.versions?.map(v => v.version) ?? []
       const res = await languages.initConfirm({
         name: suggestion.name,
         slug: suggestion.slug,
         icon: suggestion.icon,
         compatibility_model: suggestion.compatibility_model,
-        docs_url: suggestion.docs_url,
-        runtime_url: suggestion.runtime_url,
+        docs_url: '',
+        runtime_url: '',
+        versions: allVersions,
+        discovered_versions: suggestion.versions,
       })
       if (res.ok && res.data) {
         navigate(`/languages/${res.data.language.id}`)
@@ -127,35 +131,27 @@ export default function AddLanguagePage() {
               {suggestion.description}
             </p>
 
-            {suggestion.docs_url && (
+            {/* Versions preview — all discovered versions will be created */}
+            {suggestion.versions && suggestion.versions.length > 0 && (
               <div>
-                <p className="text-xs font-medium text-stone-500 uppercase tracking-wide">
-                  官方文档
+                <p className="text-xs font-medium text-stone-500 uppercase tracking-wide mb-2">
+                  收录版本 ({suggestion.versions.length})
                 </p>
-                <a
-                  href={externalURL(suggestion.docs_url)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1 inline-block text-sm text-amber-500 break-all transition-colors hover:text-amber-400"
-                >
-                  {suggestion.docs_url}
-                </a>
-              </div>
-            )}
-
-            {suggestion.runtime_url && (
-              <div>
-                <p className="text-xs font-medium text-stone-500 uppercase tracking-wide">
-                  运行时下载
-                </p>
-                <a
-                  href={externalURL(suggestion.runtime_url)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1 inline-block text-sm text-amber-500 break-all transition-colors hover:text-amber-400"
-                >
-                  {suggestion.runtime_url}
-                </a>
+                <div className="space-y-2">
+                  {suggestion.versions.map((v) => (
+                    <div key={v.version} className="flex items-center gap-3 rounded-lg border border-stone-700 bg-stone-900 px-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-medium">{v.version}</span>
+                          {v.lts && (<Badge variant="success">LTS</Badge>)}
+                          {v.version === suggestion.latest_version && (<Badge variant="info">最新</Badge>)}
+                        </div>
+                        <p className="mt-0.5 text-xs text-stone-500 truncate">{v.brief}</p>
+                      </div>
+                      <span className="text-xs text-stone-600 shrink-0">{v.released}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

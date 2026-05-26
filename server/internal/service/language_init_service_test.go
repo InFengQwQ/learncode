@@ -2,6 +2,8 @@ package service
 
 import (
 	"testing"
+
+	"learncode/internal/llm"
 )
 
 func TestParseLLMJSON(t *testing.T) {
@@ -41,7 +43,7 @@ func TestParseLLMJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var result analyzeResult
-			err := parseLLMJSON(tt.input, &result)
+			err := llm.ParseLLMJSON(tt.input, &result)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")

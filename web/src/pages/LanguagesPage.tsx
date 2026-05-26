@@ -64,7 +64,7 @@ export default function LanguagesPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {data.map((lang) => (
             <Link key={lang.id} to={`/languages/${lang.id}`}>
-              <Card hover className="p-6 h-full">
+              <Card hover className={`p-6 h-full ${lang.status !== 'active' ? 'opacity-70 ring-1 ring-amber-800/30' : ''}`}>
                 <div className="flex items-center gap-3">
                   {lang.icon && isIconURL(lang.icon) ? (
                     <img src={lang.icon} alt="" width={32} height={32} className="h-8 w-8 shrink-0 rounded-lg object-contain" />
@@ -81,6 +81,9 @@ export default function LanguagesPage() {
                     variant={lang.compatibility_model === 'strict' ? 'info' : 'warning'}
                   >
                     {lang.compatibility_model}
+                  </Badge>
+                  <Badge variant={lang.status === 'active' ? 'success' : 'danger'}>
+                    {lang.status === 'active' ? '已激活' : '待构建'}
                   </Badge>
                   <span className="text-xs text-stone-600">
                     {formatDate(lang.created_at)}

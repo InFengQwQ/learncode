@@ -13,6 +13,9 @@ export interface Language {
   icon: string
   compatibility_model: string
   source_urls: Record<string, string>
+  research_data: ResearchResult | null
+  researched_at: string | null
+  status: 'inactive' | 'active'
   created_at: string
 }
 
@@ -31,8 +34,22 @@ export interface LanguageVersion {
   source_urls: unknown
   last_version_check_at: string | null
   initialized: boolean
+  image: string
+  kb_status: 'pending' | 'building' | 'complete' | 'failed'
+  initialized_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface DiscoveredVersion {
+  version: string
+  lts: boolean
+  released: string
+  brief: string
+  download_url?: string
+  image_tag?: string
+  source?: string
+  docker_refs?: string[]
 }
 
 export interface InitSuggestion {
@@ -41,8 +58,14 @@ export interface InitSuggestion {
   icon: string
   compatibility_model: string
   description: string
-  docs_url: string
-  runtime_url: string
+  /** @deprecated No longer required — environment sources are in versions */
+  docs_url?: string
+  /** @deprecated No longer required — environment sources are in versions */
+  runtime_url?: string
+  versions: DiscoveredVersion[]
+  latest_version: string
+  confidence: number
+  reasoning?: string
 }
 
 export interface InitConfirmInput {
@@ -50,12 +73,16 @@ export interface InitConfirmInput {
   slug: string
   icon: string
   compatibility_model: string
-  docs_url: string
-  runtime_url: string
+  docs_url?: string
+  runtime_url?: string
+  versions: string[]
+  discovered_versions?: DiscoveredVersion[]
 }
 
 export interface InitResult {
   language: Language
+  versions: LanguageVersion[]
+  initialized_versions: string[]
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<APIResponse<T>> {
@@ -67,6 +94,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<APIRespo
     return { ok: true, data: undefined }
   }
   return res.json()
+}
+
+export interface ResourceEntry {
+  url: string
+  authority: string // "official" | "community"
+  description: string
+}
+
+export interface ResearchResult {
+  docs: ResourceEntry[]
+  runtimes: ResourceEntry[]
+  specs: ResourceEntry[]
 }
 
 export const languages = {
@@ -89,11 +128,22 @@ export const languages = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  research: (id: string) =>
+    request<ResearchResult>(`/languages/${id}/research`, {
+      method: 'POST',
+    }),
 }
 
 export interface CreateVersionInput {
   version: string
   status?: string
+}
+
+export interface VersionInitResult {
+  status: 'success' | 'unavailable' | 'host_mode'
+  message: string
+  verified: boolean
+  image_ref: string
 }
 
 export const versions = {
@@ -105,6 +155,39 @@ export const versions = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+  initialize: (versionId: string) =>
+    request<VersionInitResult>(`/versions/${versionId}/initialize`, {
+      method: 'POST',
+    }),
+  buildKnowledge: (versionId: string) =>
+    request<{ status: string; version_id: string }>(`/versions/${versionId}/build-knowledge`, {
+      method: 'POST',
+    }),
+  setStatus: (versionId: string, status: 'active' | 'archived') =>
+    request<LanguageVersion>(`/versions/${versionId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+}
+
+export interface KnowledgeEntry {
+  id: string
+  language_id: string
+  version_id: string | null
+  scope: 'core' | 'version' | 'idiom'
+  category: 'factual' | 'normative'
+  topic: string
+  content: Record<string, unknown>
+  source: 'llm' | 'env'
+  created_at: string
+  updated_at: string
+}
+
+export const knowledge = {
+  list: (versionId: string) =>
+    request<{ shared: KnowledgeEntry[]; private: KnowledgeEntry[] }>(
+      `/versions/${versionId}/knowledge`
+    ),
 }
 
 export interface ExecuteInput {

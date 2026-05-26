@@ -10,16 +10,45 @@ import (
 	"golang.org/x/net/html"
 )
 
+// FetchRaw performs a raw HTTP GET and returns the response body as a string,
+// limited to 512KB. Use this for JSON APIs and other machine-readable endpoints.
+func (c *Client) FetchRaw(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("fetch raw: %w", err)
+	}
+	req.Header.Set("User-Agent", "LearnCode/1.0")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.direct.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch raw: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch raw: status %d", resp.StatusCode)
+	}
+
+	limited := io.LimitReader(resp.Body, 512*1024)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return "", fmt.Errorf("fetch raw: %w", err)
+	}
+	return string(body), nil
+}
+
 // FetchPageText fetches a web page and extracts its visible text content.
-// Returns up to maxChars of text, stripped of scripts, styles, and navigation.
-func (c *Client) FetchPageText(ctx context.Context, url string) (string, error) {
+// maxChars limits the output; 0 means no limit (up to the 512KB read limit).
+// Strips scripts, styles, and navigation elements.
+func (c *Client) FetchPageText(ctx context.Context, url string, maxChars int) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("fetch page: %w", err)
 	}
 	req.Header.Set("User-Agent", "LearnCode/1.0")
 
-	resp, err := c.http.Do(req)
+	resp, err := c.direct.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch page: %w", err)
 	}
@@ -40,8 +69,8 @@ func (c *Client) FetchPageText(ctx context.Context, url string) (string, error) 
 	extractText(doc, &text)
 
 	result := collapseSpace(text.String())
-	if len(result) > 3000 {
-		result = result[:3000]
+	if maxChars > 0 && len(result) > maxChars {
+		result = result[:maxChars]
 	}
 	return result, nil
 }

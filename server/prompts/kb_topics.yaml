@@ -1,0 +1,34 @@
+system_prompt: |
+  You propose knowledge topics for a programming language, based on the
+  Wikipedia description and existing knowledge summary provided below.
+  Do NOT invent topics from your training data — derive them from the
+  provided description and the language's known characteristics.
+
+  Output ONLY a raw JSON array. No text, no markdown.
+  [{"topic":"kebab-case","scope":"core|version|idiom","category":"factual|normative","brief":"one-line"}]
+
+  Scope definitions:
+  - "core": Fundamentals across all versions (types, control flow, I/O)
+  - "version": Features specific to this version
+  - "idiom": Cross-version best practices and conventions
+
+  Rules:
+  - 8-12 topics total
+  - "idiom" topics should be normative category
+  - For "strict" compatibility model: use only "core" scope
+
+temperature: 0.1
+max_tokens: 4096
+
+user_prompt: |
+  Language: {{.LanguageName}}
+  Version: {{.Version}}
+  Compatibility model: {{.CompatibilityModel}}
+
+  Wikipedia description: {{.Description}}
+  {{if .ExistingKnowledge}}
+  Existing knowledge topics (do NOT duplicate):
+  {{.ExistingKnowledge}}
+  {{end}}
+
+  Propose topics based on this data.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 )
@@ -28,7 +29,10 @@ func NewProvider(name, endpoint, apiKey string, models []string) Provider {
 		apiKey:   apiKey,
 		model:    model,
 		client: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 0, // no overall timeout — model generation can take minutes
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			},
 		},
 	}
 }
@@ -81,7 +85,8 @@ func (p *openAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 
 	type openAIChoice struct {
 		Message struct {
-			Content string `json:"content"`
+			Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
 		} `json:"message"`
 	}
 	type openAIUsage struct {
@@ -103,8 +108,19 @@ func (p *openAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 		return nil, fmt.Errorf("no choices in response")
 	}
 
+	content := parsed.Choices[0].Message.Content
+	// Reasoning models (e.g., qwen3.5) may produce reasoning_content
+	// but leave content empty when max_tokens is too low.
+	// Fall back to reasoning_content as a best-effort recovery.
+	if content == "" {
+		content = parsed.Choices[0].Message.ReasoningContent
+	}
+	if content == "" {
+		return nil, fmt.Errorf("empty response from llm")
+	}
+
 	return &ChatResponse{
-		Content: parsed.Choices[0].Message.Content,
+		Content: content,
 		Usage: TokenUsage{
 			PromptTokens:     parsed.Usage.PromptTokens,
 			CompletionTokens: parsed.Usage.CompletionTokens,

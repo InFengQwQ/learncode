@@ -2,16 +2,19 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"learncode/internal/config"
+	"learncode/internal/llm"
 )
 
 type ConfigHandler struct {
-	Cfg  *config.Config
-	Path string
+	Cfg    *config.Config
+	Path   string
+	LLMSvc *llm.Service
 }
 
 func (h *ConfigHandler) Routes(r chi.Router) {
@@ -54,6 +57,17 @@ func (h *ConfigHandler) PutLLM(w http.ResponseWriter, r *http.Request) {
 		h.Cfg.LLM = prevLLM
 		RespondError(w, http.StatusInternalServerError, "failed to save config")
 		return
+	}
+
+	// Hot-reload the LLM service so new settings take effect immediately
+	if h.LLMSvc != nil {
+		if err := h.LLMSvc.Reload(h.Cfg.LLM); err != nil {
+			slog.Warn("llm reload failed after config save", "error", err)
+		} else {
+			slog.Info("llm service reloaded", "default", h.Cfg.LLM.Default, "providers", len(h.Cfg.LLM.Providers))
+		}
+	} else {
+		slog.Warn("llm service is nil, cannot reload")
 	}
 
 	RespondJSON(w, http.StatusOK, h.Cfg.LLM.ToResponse())

@@ -4,68 +4,77 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
+	"learncode/internal/executor"
 	"learncode/internal/llm"
 	"learncode/internal/model"
 	"learncode/internal/scraper"
 )
 
+// DiscoveredVersion is a single version discovered for a programming language.
+type DiscoveredVersion struct {
+	Version     string   `json:"version"`
+	LTS         bool     `json:"lts"`
+	Released    string   `json:"released"`
+	Brief       string   `json:"brief"`
+	DownloadURL string   `json:"download_url,omitempty"`
+	ImageTag    string   `json:"image_tag,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	DockerRefs  []string `json:"docker_refs,omitempty"`
+}
+
 type InitSuggestion struct {
-	Name               string `json:"name"`
-	Slug               string `json:"slug"`
-	Icon               string `json:"icon"`
-	CompatibilityModel string `json:"compatibility_model"`
-	Description        string `json:"description"`
-	DocsURL            string `json:"docs_url"`
-	RuntimeURL         string `json:"runtime_url"`
-	Confidence         int    `json:"confidence"`
-	Reasoning          string `json:"reasoning,omitempty"`
+	Name               string              `json:"name"`
+	Slug               string              `json:"slug"`
+	Icon               string              `json:"icon"`
+	CompatibilityModel string              `json:"compatibility_model"`
+	Description        string              `json:"description"`
+	Versions           []DiscoveredVersion `json:"versions"`
+	LatestVersion      string              `json:"latest_version"`
 }
 
 type InitConfirmInput struct {
-	Name               string `json:"name"`
-	Slug               string `json:"slug"`
-	Icon               string `json:"icon"`
-	CompatibilityModel string `json:"compatibility_model"`
-	DocsURL            string `json:"docs_url"`
-	RuntimeURL         string `json:"runtime_url"`
+	Name               string              `json:"name"`
+	Slug               string              `json:"slug"`
+	Icon               string              `json:"icon"`
+	CompatibilityModel string              `json:"compatibility_model"`
+	DocsURL            string              `json:"docs_url,omitempty"`
+	RuntimeURL         string              `json:"runtime_url,omitempty"`
+	Versions           []string            `json:"versions"`
+	DiscoveredVersions []DiscoveredVersion `json:"discovered_versions,omitempty"`
 }
 
 type InitResult struct {
-	Language *model.Language `json:"language"`
+	Language            *model.Language         `json:"language"`
+	Versions            []model.LanguageVersion `json:"versions"`
+	InitializedVersions []string                `json:"initialized_versions"`
 }
 
 type LanguageInitService struct {
-	LangSvc   *LanguageService
-	LLM       *llm.Service
-	PromptDir string
-	Scraper   *scraper.Client
+	LangSvc        *LanguageService
+	VersionSvc     *VersionService
+	LLM            *llm.Service
+	PromptDir      string
+	Scraper        *scraper.Client
+	InitVersionSvc *InitService
 }
 
 // ─── Internal LLM response types ──────────────────────────────
 
 type analyzeResult struct {
-	IsLanguage   bool   `json:"is_language"`
 	OfficialName string `json:"official_name"`
 	Description  string `json:"description"`
-	Confidence   int    `json:"confidence"`
-	Reasoning    string `json:"reasoning,omitempty"`
 }
 
-type resourceResult struct {
-	DocsURL        string `json:"docs_url"`
-	DocsAuthority  string `json:"docs_authority"`
-	RuntimeURL     string `json:"runtime_url"`
-	RuntimeExists  bool   `json:"runtime_exists"`
-}
-
-// ─── Query: Wikipedia lookup → LLM analysis → resource identification ───
+// ─── Query: Wikipedia lookup → LLM analysis → version discovery ───
 
 func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*InitSuggestion, error) {
-	// Step 1: Wikipedia search
 	hits, err := s.Scraper.SearchWikipedia(ctx, languageName+" programming language")
 	if err != nil {
 		return nil, fmt.Errorf("wikipedia search: %w", err)
@@ -75,63 +84,64 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 	}
 	page := hits[0]
 
-	// Normalize the Wikipedia title — strip disambiguation like
-	// "Python (programming language)" → "Python" before feeding to the LLM.
 	normalizedTitle := scraper.NormalizeTitle(page.Title)
 
-	// Step 2: Get categories + infobox
-	cats, _ := s.Scraper.GetPageCategories(ctx, page.Title)
-	info, _ := s.Scraper.GetInfobox(ctx, page.Title)
+	cats, errCat := s.Scraper.GetPageCategories(ctx, page.Title)
+	if errCat != nil {
+		return nil, fmt.Errorf("wikipedia categories: %w", errCat)
+	}
+	info, errInfo := s.Scraper.GetInfobox(ctx, page.Title)
+	if errInfo != nil {
+		return nil, fmt.Errorf("wikipedia infobox: %w", errInfo)
+	}
 
-	// Step 3: Signal scoring — reject obvious non-languages
 	_, reject := scraper.ScoreSignal(cats, info)
 	if reject {
 		return nil, fmt.Errorf("not a programming language: %q is classified as something else", page.Title)
 	}
 
-	// Step 4: LLM analysis — the LLM only decides is_language, official_name,
-	// description, and confidence. Everything else is deterministic Go code below.
 	analysis, err := s.llmAnalyze(ctx, normalizedTitle, cats, info)
 	if err != nil {
 		return nil, fmt.Errorf("llm analysis: %w", err)
 	}
-	if !analysis.IsLanguage || analysis.Confidence < 5 {
-		return nil, fmt.Errorf("not a programming language: %s", analysis.Reasoning)
-	}
 
-	// Step 4b: Go-level determinations — these are NOT from the LLM.
-	// Small models produce inconsistent results for these fields.
 	compatModel := scraper.CompatibilityModel(analysis.OfficialName, cats, info)
 	slug := scraper.NormalizeSlug(analysis.OfficialName)
-
-	// Icon: try Wikipedia page image first, fall back to emoji lookup.
-	// Use the original page title (with disambiguation) for the image API
-	// because that's the actual Wikipedia article name.
 	icon := fetchIcon(ctx, s.Scraper, page.Title, analysis.OfficialName)
 
-	// Step 5: Resource identification — fetch official site and have LLM extract URLs
-	var docsURL, runtimeURL string
+	var versions []DiscoveredVersion
+	var latestVer string
+
 	if info != nil && info.Website != "" {
-		pageText, err := s.Scraper.FetchPageText(ctx, info.Website)
-		if err == nil && pageText != "" {
-			res, _ := s.llmResources(ctx, analysis.OfficialName, info.Website, pageText)
-			if res != nil && res.RuntimeExists {
-				docsURL = res.DocsURL
-				runtimeURL = res.RuntimeURL
-			}
+		vs, err := s.discoverVersionsFromSource(ctx, analysis.OfficialName, slug, compatModel, info.Website, nil)
+		if err != nil {
+			slog.Warn("version discovery from web failed, falling back to Wikipedia infobox",
+				"language", analysis.OfficialName, "error", err)
+		}
+		if vs != nil {
+			versions = vs
 		}
 	}
-	// Fallback: use Wikipedia data directly
-	if docsURL == "" && info != nil {
-		docsURL = info.Website
-	}
-	if runtimeURL == "" && info != nil {
-		runtimeURL = info.Website
+
+	if len(versions) == 0 && info != nil && info.LatestVersion != "" {
+		v := cleanWikiVersion(info.LatestVersion)
+		if v != "" {
+			versions = []DiscoveredVersion{{
+				Version:  v,
+				Released: info.FirstAppeared,
+				Brief:    fmt.Sprintf("Latest stable version of %s", analysis.OfficialName),
+				Source:   "wikipedia",
+			}}
+		}
 	}
 
-	// Validate URLs before sending to frontend — reject CSS garbage, file://, etc.
-	docsURL = validateURL(docsURL)
-	runtimeURL = validateURL(runtimeURL)
+	if len(versions) == 0 && compatModel == "strict" {
+		return nil, fmt.Errorf("strict language %q: no versions could be discovered", analysis.OfficialName)
+	}
+
+	if len(versions) > 0 {
+		latestVer = versions[0].Version
+	}
 
 	return &InitSuggestion{
 		Name:               analysis.OfficialName,
@@ -139,17 +149,13 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 		Icon:               icon,
 		CompatibilityModel: compatModel,
 		Description:        analysis.Description,
-		DocsURL:            docsURL,
-		RuntimeURL:         runtimeURL,
-		Confidence:         analysis.Confidence,
-		Reasoning:          analysis.Reasoning,
+		Versions:           versions,
+		LatestVersion:      latestVer,
 	}, nil
 }
 
 func (s *LanguageInitService) llmAnalyze(ctx context.Context, title string, cats []string, info *scraper.InfoboxData) (*analyzeResult, error) {
-	vars := map[string]string{
-		"Title": title,
-	}
+	vars := map[string]string{"Title": title}
 	if info != nil {
 		if info.InfoboxType != "" {
 			vars["InfoboxType"] = info.InfoboxType
@@ -179,105 +185,59 @@ func (s *LanguageInitService) llmAnalyze(ctx context.Context, title string, cats
 		return nil, fmt.Errorf("load template: %w", err)
 	}
 
-	content, _, err := s.LLM.Chat(ctx, tmpl.SystemPrompt, tmpl.UserPrompt)
+	content, _, err := s.LLM.ChatWithTemp(ctx, tmpl.SystemPrompt, tmpl.UserPrompt, tmpl.Temperature, tmpl.MaxTokens)
 	if err != nil {
 		return nil, fmt.Errorf("llm chat: %w", err)
 	}
 
 	var result analyzeResult
-	if err := parseLLMJSON(content, &result); err != nil {
+	if err := llm.ParseLLMJSON(content, &result); err != nil {
 		return nil, fmt.Errorf("parse llm response: %w", err)
 	}
 	return &result, nil
 }
 
-func (s *LanguageInitService) llmResources(ctx context.Context, name, website, pageText string) (*resourceResult, error) {
-	tmpl, err := llm.LoadTemplate(s.PromptDir+"/language_resources.yaml", map[string]string{
-		"OfficialName": name,
-		"WebsiteURL":   website,
-		"PageText":     pageText,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("load template: %w", err)
-	}
+// ─── Confirm ──────────────────────────────────────────────
 
-	content, _, err := s.LLM.Chat(ctx, tmpl.SystemPrompt, tmpl.UserPrompt)
-	if err != nil {
-		return nil, fmt.Errorf("llm chat: %w", err)
-	}
-
-	var result resourceResult
-	if err := parseLLMJSON(content, &result); err != nil {
-		return nil, fmt.Errorf("parse llm response: %w", err)
-	}
-	return &result, nil
-}
-
-// ─── Confirm: validate and create Language ──────────────────────────
-
-// fetchIcon resolves a language icon: Wikipedia page image first, then emoji
-// lookup by name, finally empty string (caller uses placeholder in UI).
 func fetchIcon(ctx context.Context, client *scraper.Client, pageTitle, officialName string) string {
 	if client == nil {
-		return scraper.IconEmoji(officialName)
+		return ""
 	}
 	img, err := client.GetPageImage(ctx, pageTitle)
-	if err != nil {
-		// API failure — fall through to emoji
-	} else if img != "" {
+	if err == nil && img != "" {
 		return img
 	}
-	return scraper.IconEmoji(officialName)
+	return ""
 }
 
 var validCompatModels = map[string]bool{
-	"strict":    true,
-	"versioned": true,
-	"none":      true,
+	"strict": true, "versioned": true, "none": true,
 }
 
 var slugRx = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 func (s *LanguageInitService) Confirm(ctx context.Context, input InitConfirmInput) (*InitResult, error) {
-	// --- required fields ---
 	if input.Name == "" || input.Slug == "" || input.CompatibilityModel == "" {
 		return nil, fmt.Errorf("name, slug, and compatibility_model are required")
 	}
-
-	// --- validate compatibility_model enum ---
 	if !validCompatModels[input.CompatibilityModel] {
-		return nil, fmt.Errorf(
-			"invalid compatibility_model %q: must be strict, versioned, or none",
-			input.CompatibilityModel,
-		)
+		return nil, fmt.Errorf("invalid compatibility_model %q", input.CompatibilityModel)
 	}
-
-	// --- validate slug format (lowercase alphanumeric + hyphens, no leading/trailing hyphens, no consecutive hyphens) ---
 	if !slugRx.MatchString(input.Slug) {
-		return nil, fmt.Errorf(
-			"invalid slug %q: must be lowercase letters, digits, and single hyphens only (e.g. java, cpp, c-sharp)",
-			input.Slug,
-		)
+		return nil, fmt.Errorf("invalid slug %q", input.Slug)
 	}
-
-	// --- validate URLs are well-formed ---
 	if input.DocsURL != "" {
 		if u := validateURL(input.DocsURL); u == "" {
 			return nil, fmt.Errorf("invalid docs_url: %s", input.DocsURL)
 		}
-		input.DocsURL = validateURL(input.DocsURL)
 	}
 	if input.RuntimeURL != "" {
 		if u := validateURL(input.RuntimeURL); u == "" {
 			return nil, fmt.Errorf("invalid runtime_url: %s", input.RuntimeURL)
 		}
-		input.RuntimeURL = validateURL(input.RuntimeURL)
 	}
 
-	sourceURLs, err := json.Marshal(map[string]string{
-		"docs":    input.DocsURL,
-		"runtime": input.RuntimeURL,
-	})
+	sourceURLs, err := json.Marshal(map[string]string{"docs": input.DocsURL, "runtime": input.RuntimeURL})
 	if err != nil {
 		return nil, fmt.Errorf("marshal source_urls: %w", err)
 	}
@@ -293,15 +253,108 @@ func (s *LanguageInitService) Confirm(ctx context.Context, input InitConfirmInpu
 		return nil, fmt.Errorf("create language: %w", err)
 	}
 
-	return &InitResult{Language: lang}, nil
+	var createdVersions []model.LanguageVersion
+	var initializedVersions []string
+	if s.VersionSvc != nil && len(input.Versions) > 0 {
+		discovered := make(map[string]*DiscoveredVersion)
+		for i := range input.DiscoveredVersions {
+			discovered[input.DiscoveredVersions[i].Version] = &input.DiscoveredVersions[i]
+		}
+		for _, ver := range input.Versions {
+			v := &model.LanguageVersion{
+				LanguageID: lang.ID,
+				Version:    ver,
+				Status:     "active",
+			}
+			var dv *DiscoveredVersion
+			if d, ok := discovered[ver]; ok {
+				dv = d
+				srcData, _ := json.Marshal(map[string]interface{}{
+					"download_url": dv.DownloadURL,
+					"source_page":  dv.Source,
+					"image_tag":    dv.ImageTag,
+					"docker_refs":  dv.DockerRefs,
+				})
+				v.SourceURLs = srcData
+			}
+			if err := s.VersionSvc.Create(ctx, v); err != nil {
+				slog.Warn("failed to create version", "language", lang.Name, "version", ver, "error", err)
+				continue
+			}
+			if s.InitVersionSvc != nil && dv != nil {
+				if s.autoInitialize(ctx, v, lang, dv) {
+					initializedVersions = append(initializedVersions, ver)
+				}
+			}
+			createdVersions = append(createdVersions, *v)
+		}
+	}
+
+	return &InitResult{Language: lang, Versions: createdVersions, InitializedVersions: initializedVersions}, nil
 }
 
-// ─── JSON parsing ─────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────
 
-// validateURL checks that a string is a well-formed http/https URL and
-// returns the normalized URL string. Returns "" for invalid input.
-// This catches CSS garbage, file:// URIs, and other non-URL content
-// that may have leaked from infobox parsing.
+func cleanWikiVersion(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "X.Y" || raw == "x.y" {
+		return ""
+	}
+	re := regexp.MustCompile(`\d+(?:\.\d+)*`)
+	matches := re.FindAllString(raw, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	for _, m := range matches {
+		if len(m) >= 2 {
+			return m
+		}
+	}
+	return matches[0]
+}
+
+func resolveImage(dv *DiscoveredVersion, slug string) string {
+	if dv != nil && dv.ImageTag != "" {
+		return dv.ImageTag
+	}
+	if dv != nil {
+		majorMinor := extractMajorMinor(dv.Version)
+		for _, ref := range dv.DockerRefs {
+			if strings.Contains(ref, majorMinor) {
+				return ref
+			}
+		}
+	}
+	if base, ok := executor.DefaultImage(slug); ok && base != "" {
+		if dv != nil {
+			majorMinor := extractMajorMinor(dv.Version)
+			if majorMinor != "" {
+				re := regexp.MustCompile(`:\d+\.\d+`)
+				if re.MatchString(base) {
+					return re.ReplaceAllString(base, ":"+majorMinor)
+				}
+			}
+		}
+		return base
+	}
+	if dv != nil {
+		return fmt.Sprintf("%s:%s", slug, dv.Version)
+	}
+	return fmt.Sprintf("%s:latest", slug)
+}
+
+func (s *LanguageInitService) autoInitialize(ctx context.Context, v *model.LanguageVersion, lang *model.Language, dv *DiscoveredVersion) bool {
+	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	result, err := s.InitVersionSvc.Initialize(initCtx, v.ID)
+	if err != nil {
+		slog.Warn("auto-initialize failed", "language", lang.Name, "version", v.Version, "error", err)
+		return false
+	}
+	slog.Info("auto-initialize ready", "language", lang.Name, "version", v.Version, "status", result.Status)
+	return true
+}
+
 func validateURL(raw string) string {
 	if raw == "" {
 		return ""
@@ -313,7 +366,6 @@ func validateURL(raw string) string {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return ""
 	}
-	// Reject strings that look like CSS (contain braces, semicolons, or common CSS selectors)
 	if strings.Contains(raw, "{") || strings.Contains(raw, "}") ||
 		strings.Contains(raw, ".mw-") || strings.Contains(raw, "plainlist") {
 		return ""
@@ -321,17 +373,548 @@ func validateURL(raw string) string {
 	return u.String()
 }
 
-func parseLLMJSON(content string, v interface{}) error {
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimPrefix(content, "```")
-		content = strings.TrimSuffix(content, "```")
-		content = strings.TrimSpace(content)
+// splitIntoChunks splits text into overlapping chunks of at most chunkSize bytes.
+func splitIntoChunks(text string, chunkSize, overlap int) []string {
+	if len(text) <= chunkSize {
+		return []string{text}
 	}
-	idx := strings.Index(content, "{")
-	if idx >= 0 {
-		content = content[idx:]
+	var chunks []string
+	start := 0
+	for start < len(text) {
+		end := start + chunkSize
+		if end > len(text) {
+			end = len(text)
+		}
+		chunks = append(chunks, text[start:end])
+		start += chunkSize - overlap
+		if start >= len(text) {
+			break
+		}
 	}
-	return json.Unmarshal([]byte(content), v)
+	return chunks
+}
+
+func uniqueStrings(in []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, s := range in {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// ─── Version Discovery (Tools-First) ───────────────────────────
+
+func (s *LanguageInitService) discoverVersionsFromSource(ctx context.Context, name, slug, compatModel, websiteURL string, wikiLinks []string) ([]DiscoveredVersion, error) {
+	var allVersions []DiscoveredVersion
+
+	candidates := buildCandidateSources(websiteURL, wikiLinks)
+	seen := make(map[string]bool)
+
+	// Phase A: structured sources — zero LLM cost, just HTTP + JSON
+	for _, c := range candidates {
+		if c.sourceType != "structured" || seen[c.url] {
+			continue
+		}
+		seen[c.url] = true
+		versions := s.fetchStructuredVersions(ctx, c.url)
+		for i := range versions {
+			versions[i].Source = c.url
+		}
+		allVersions = append(allVersions, versions...)
+	}
+	if len(allVersions) > 0 && compatModel == "strict" {
+		return s.postProcessVersions(allVersions, compatModel, slug), nil
+	}
+
+	// Phase B: HTML pages with LLM extraction.
+	// Process ALL candidate pages — no artificial limit on LLM calls.
+	// Large pages are automatically chunked into multiple smaller calls.
+	for _, c := range candidates {
+		if c.sourceType == "structured" || seen[c.url] {
+			continue
+		}
+		seen[c.url] = true
+
+		versions := s.extractVersionsFromHTML(ctx, name, slug, compatModel, c.url)
+		for i := range versions {
+			versions[i].Source = c.url
+		}
+		allVersions = append(allVersions, versions...)
+
+		if compatModel == "strict" && len(allVersions) >= 1 {
+			break
+		}
+	}
+
+	if len(allVersions) == 0 {
+		return nil, fmt.Errorf("no version info extracted from homepage or %d candidate sources", len(candidates))
+	}
+
+	return s.postProcessVersions(allVersions, compatModel, slug), nil
+}
+
+type sourceCandidate struct {
+	url        string
+	sourceType string
+}
+
+func buildCandidateSources(websiteURL string, wikiLinks []string) []sourceCandidate {
+	var candidates []sourceCandidate
+	for _, link := range wikiLinks {
+		if isWikipediaURL(link) || link == "" {
+			continue
+		}
+		candidates = append(candidates, sourceCandidate{url: link, sourceType: classifySourceType(link)})
+	}
+	if websiteURL != "" {
+		base := strings.TrimRight(websiteURL, "/")
+		for _, p := range []string{"/downloads", "/download", "/releases", "/changelog"} {
+			candidates = append(candidates, sourceCandidate{url: base + p, sourceType: "html"})
+		}
+	}
+	for _, c := range candidates {
+		if strings.Contains(c.url, "github.com/") && !strings.Contains(c.url, "api.github.com") {
+			if apiURL := githubRepoToAPI(c.url); apiURL != "" {
+				candidates = append([]sourceCandidate{{url: apiURL, sourceType: "structured"}}, candidates...)
+				break
+			}
+		}
+	}
+	sortCandidates(candidates)
+	return candidates
+}
+
+func classifySourceType(urlStr string) string {
+	lower := strings.ToLower(urlStr)
+	if strings.Contains(lower, "/api/") ||
+		strings.HasSuffix(lower, ".json") ||
+		strings.HasSuffix(lower, ".rss") {
+		return "structured"
+	}
+	return "html"
+}
+
+func githubRepoToAPI(repoURL string) string {
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) >= 2 {
+		return fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", parts[0], parts[1])
+	}
+	return ""
+}
+
+func isWikipediaURL(link string) bool {
+	return strings.Contains(strings.ToLower(link), "wikipedia.org") ||
+		strings.Contains(strings.ToLower(link), "wikimedia.org")
+}
+
+func sortCandidates(candidates []sourceCandidate) {
+	for i := 0; i < len(candidates); i++ {
+		for j := i + 1; j < len(candidates); j++ {
+			if candidates[i].sourceType != "structured" && candidates[j].sourceType == "structured" {
+				candidates[i], candidates[j] = candidates[j], candidates[i]
+			}
+		}
+	}
+}
+
+func (s *LanguageInitService) postProcessVersions(allVersions []DiscoveredVersion, compatModel string, slug string) []DiscoveredVersion {
+	allVersions = dedupVersions(allVersions)
+	allVersions = filterValidVersions(allVersions)
+
+	if compatModel == "strict" && len(allVersions) > 1 {
+		allVersions = allVersions[:1]
+	}
+
+	for i := range allVersions {
+		if allVersions[i].DownloadURL != "" && !urlIsReachable(context.Background(), allVersions[i].DownloadURL) {
+			allVersions[i].DownloadURL = ""
+		}
+	}
+
+	for i := range allVersions {
+		if allVersions[i].ImageTag != "" {
+			continue
+		}
+		if len(allVersions[i].DockerRefs) > 0 {
+			majorMinor := extractMajorMinor(allVersions[i].Version)
+			for _, ref := range allVersions[i].DockerRefs {
+				if strings.Contains(ref, majorMinor) {
+					allVersions[i].ImageTag = ref
+					break
+				}
+			}
+		}
+		if allVersions[i].ImageTag == "" {
+			allVersions[i].ImageTag = resolveImage(&allVersions[i], slug)
+		}
+	}
+
+	return allVersions
+}
+
+func (s *LanguageInitService) fetchStructuredVersions(ctx context.Context, u string) []DiscoveredVersion {
+	raw, err := s.Scraper.FetchRaw(ctx, u)
+	if err != nil {
+		slog.Debug("structured: failed to fetch", "url", u, "error", err)
+		return nil
+	}
+	var data interface{}
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return nil
+	}
+	return extractVersionsFromJSON(data)
+}
+
+func extractVersionsFromJSON(data interface{}) []DiscoveredVersion {
+	switch d := data.(type) {
+	case map[string]interface{}:
+		if results, ok := d["results"].([]interface{}); ok {
+			var versions []DiscoveredVersion
+			for _, r := range results {
+				if m, ok := r.(map[string]interface{}); ok {
+					if name, ok := m["name"].(string); ok && looksLikeVersion(name) {
+						versions = append(versions, DiscoveredVersion{Version: cleanTag(name), ImageTag: name})
+					}
+				}
+			}
+			return versions
+		}
+		if releases, ok := d["releases"].(map[string]interface{}); ok {
+			var versions []DiscoveredVersion
+			for ver := range releases {
+				if looksLikeVersion(ver) {
+					versions = append(versions, DiscoveredVersion{Version: ver})
+				}
+			}
+			if info, ok := d["info"].(map[string]interface{}); ok {
+				if latest, ok := info["version"].(string); ok {
+					sortVersionsByLatest(versions, latest)
+				}
+			}
+			return versions
+		}
+		if npmVersions, ok := d["versions"].(map[string]interface{}); ok {
+			var versions []DiscoveredVersion
+			for ver := range npmVersions {
+				if looksLikeVersion(ver) {
+					versions = append(versions, DiscoveredVersion{Version: ver})
+				}
+			}
+			if distTags, ok := d["dist-tags"].(map[string]interface{}); ok {
+				if latest, ok := distTags["latest"].(string); ok {
+					sortVersionsByLatest(versions, latest)
+				}
+			}
+			return versions
+		}
+	case []interface{}:
+		var versions []DiscoveredVersion
+		for _, item := range d {
+			if m, ok := item.(map[string]interface{}); ok {
+				if tag, ok := m["tag_name"].(string); ok {
+					ver := strings.TrimPrefix(tag, "v")
+					if looksLikeVersion(ver) {
+						if isPrerelease, _ := m["prerelease"].(bool); !isPrerelease {
+							versions = append(versions, DiscoveredVersion{Version: ver})
+						}
+					}
+					continue
+				}
+				if ver, ok := m["version"].(string); ok {
+					ver = strings.TrimPrefix(ver, "go")
+					if looksLikeVersion(ver) {
+						if stable, _ := m["stable"].(bool); stable {
+							versions = append(versions, DiscoveredVersion{Version: ver})
+						}
+					}
+				}
+			}
+		}
+		return versions
+	}
+	return nil
+}
+
+func looksLikeVersion(s string) bool { return regexp.MustCompile(`^\d+\.\d+`).MatchString(s) }
+
+func cleanTag(tag string) string {
+	if idx := strings.IndexAny(tag, "-_"); idx > 0 {
+		return tag[:idx]
+	}
+	return tag
+}
+
+func sortVersionsByLatest(versions []DiscoveredVersion, latest string) {
+	for i := range versions {
+		if versions[i].Version == latest && i > 0 {
+			versions[0], versions[i] = versions[i], versions[0]
+			break
+		}
+	}
+}
+
+func (s *LanguageInitService) extractVersionsFromHTML(ctx context.Context, name, slug, compatModel, u string) []DiscoveredVersion {
+	return s.extractVersionsFromHTMLPage(ctx, name, slug, compatModel, u)
+}
+
+// extractVersionsFromHTMLPage fetches a page and extracts versions.
+// For large pages, it splits the text into overlapping chunks and makes
+// multiple LLM calls — one per chunk — then merges the results.
+func (s *LanguageInitService) extractVersionsFromHTMLPage(ctx context.Context, name, slug, compatModel, u string) []DiscoveredVersion {
+	text, err := s.Scraper.FetchPageText(ctx, u, 30000)
+	if err != nil {
+		slog.Debug("extract: failed to fetch page", "url", u, "error", err)
+		return nil
+	}
+
+	const maxChunk = 6000
+	const overlap = 400
+
+	if len(text) <= maxChunk {
+		vs, dockerRefs := s.extractVersionsFromChunk(ctx, name, slug, compatModel, u, text, false)
+		for i := range vs {
+			vs[i].DockerRefs = dockerRefs
+		}
+		return vs
+	}
+
+	chunks := splitIntoChunks(text, maxChunk, overlap)
+	slog.Debug("extract: chunking large page",
+		"url", u, "text_len", len(text), "chunks", len(chunks))
+
+	var all []DiscoveredVersion
+	var allDockerRefs []string
+	for _, chunk := range chunks {
+		vs, dockerRefs := s.extractVersionsFromChunk(ctx, name, slug, compatModel, u, chunk, true)
+		for j := range vs {
+			vs[j].Source = u
+		}
+		all = append(all, vs...)
+		allDockerRefs = append(allDockerRefs, dockerRefs...)
+	}
+
+	// If we got versions from multiple chunks, do one more merge pass
+	// to deduplicate and reconcile.
+	if len(all) > 0 && len(chunks) > 2 {
+		all = s.mergeChunkedVersions(ctx, name, slug, compatModel, u, all)
+	}
+
+	// Apply docker refs to all entries that don't have one
+	uniqueRefs := uniqueStrings(allDockerRefs)
+	if len(uniqueRefs) > 0 {
+		for i := range all {
+			if len(all[i].DockerRefs) == 0 {
+				all[i].DockerRefs = uniqueRefs
+			}
+		}
+	}
+
+	return dedupVersions(all)
+}
+
+// extractVersionsFromChunk calls LLM to extract versions from a text chunk.
+func (s *LanguageInitService) extractVersionsFromChunk(ctx context.Context, name, slug, compatModel, pageURL, text string, isChunk bool) ([]DiscoveredVersion, []string) {
+	isChunkStr := "false"
+	if isChunk {
+		isChunkStr = "true"
+	}
+
+	tmpl, err := llm.LoadTemplate(s.PromptDir+"/extract_versions.yaml", map[string]string{
+		"LanguageName":       name,
+		"Slug":               slug,
+		"CompatibilityModel": compatModel,
+		"PageURL":            pageURL,
+		"PageText":           text,
+		"IsChunk":            isChunkStr,
+	})
+	if err != nil {
+		slog.Debug("extract: failed to load template", "error", err)
+		return nil, nil
+	}
+
+	content, _, err := s.LLM.ChatWithTemp(ctx, tmpl.SystemPrompt, tmpl.UserPrompt, tmpl.Temperature, tmpl.MaxTokens)
+	if err != nil {
+		slog.Debug("extract: llm call failed", "error", err)
+		return nil, nil
+	}
+
+	var result struct {
+		Versions   []DiscoveredVersion `json:"versions"`
+		Latest     string              `json:"latest"`
+		DockerRefs []string            `json:"docker_refs"`
+	}
+	if err := llm.ParseLLMJSON(content, &result); err != nil {
+		slog.Debug("extract: parse failed", "error", err)
+		return nil, nil
+	}
+	return result.Versions, result.DockerRefs
+}
+
+// mergeChunkedVersions makes one final LLM call to reconcile versions
+// extracted from multiple chunks, removing duplicates and normalizing.
+func (s *LanguageInitService) mergeChunkedVersions(ctx context.Context, name, slug, compatModel, pageURL string, versions []DiscoveredVersion) []DiscoveredVersion {
+	// Build a compact list for the merge prompt
+	var compact []map[string]string
+	for _, v := range versions {
+		compact = append(compact, map[string]string{
+			"version":      v.Version,
+			"lts":          fmt.Sprintf("%v", v.LTS),
+			"released":     v.Released,
+			"download_url": v.DownloadURL,
+		})
+	}
+	compactJSON, _ := json.Marshal(compact)
+
+	tmpl, err := llm.LoadTemplate(s.PromptDir+"/extract_versions_merge.yaml", map[string]string{
+		"LanguageName":       name,
+		"Slug":               slug,
+		"CompatibilityModel": compatModel,
+		"PageURL":            pageURL,
+		"ChunkedVersions":    string(compactJSON),
+	})
+	if err != nil {
+		slog.Debug("merge: failed to load template", "error", err)
+		return versions
+	}
+
+	content, _, err := s.LLM.ChatWithTemp(ctx, tmpl.SystemPrompt, tmpl.UserPrompt, 0.1, 2048)
+	if err != nil {
+		slog.Debug("merge: llm call failed", "error", err)
+		return versions
+	}
+
+	var merged []DiscoveredVersion
+	if err := llm.ParseLLMJSON(content, &merged); err != nil {
+		slog.Debug("merge: parse failed", "error", err)
+		return versions
+	}
+	return merged
+}
+
+func dedupVersions(versions []DiscoveredVersion) []DiscoveredVersion {
+	seen := make(map[string]bool)
+	var out []DiscoveredVersion
+	for _, v := range versions {
+		if !seen[v.Version] {
+			seen[v.Version] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func filterValidVersions(versions []DiscoveredVersion) []DiscoveredVersion {
+	hasDigit := regexp.MustCompile(`\d`)
+	var out []DiscoveredVersion
+	for _, v := range versions {
+		if v.Version != "" && v.Version != "X.Y" && v.Version != "x.y" && hasDigit.MatchString(v.Version) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func urlIsReachable(ctx context.Context, rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, "HEAD", rawURL, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("User-Agent", "LearnCode/1.0")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 400
+}
+
+func extractMajorMinor(version string) string {
+	m := regexp.MustCompile(`^(\d+\.\d+)`).FindString(version)
+	return m
+}
+
+// ─── Research ──────────────────────────────────────────────────
+
+type ResourceEntry struct {
+	URL         string `json:"url"`
+	Authority   string `json:"authority"`
+	Description string `json:"description"`
+}
+
+type ResearchResult struct {
+	Docs     []ResourceEntry `json:"docs"`
+	Runtimes []ResourceEntry `json:"runtimes"`
+	Specs    []ResourceEntry `json:"specs"`
+}
+
+func (s *LanguageInitService) Research(ctx context.Context, lang *model.Language) (*ResearchResult, error) {
+	if s.LLM == nil {
+		return nil, fmt.Errorf("llm service not available")
+	}
+
+	var website string
+	var externalLinks []string
+
+	if s.Scraper != nil {
+		info, _ := s.Scraper.GetInfobox(ctx, lang.Name)
+		if info != nil && info.Website != "" {
+			website = info.Website
+		}
+		links, _ := s.Scraper.GetExternalLinks(ctx, lang.Name)
+		if len(links) > 0 {
+			externalLinks = links
+		}
+	}
+
+	pageText := ""
+	if website != "" && s.Scraper != nil {
+		text, err := s.Scraper.FetchPageText(ctx, website, 15000)
+		if err == nil {
+			pageText = text
+		}
+	}
+
+	vars := map[string]string{
+		"OfficialName":  lang.Name,
+		"WebsiteURL":    website,
+		"PageText":      pageText,
+		"ExternalLinks": strings.Join(externalLinks, "\n"),
+	}
+
+	tmpl, err := llm.LoadTemplate(s.PromptDir+"/language_research.yaml", vars)
+	if err != nil {
+		return nil, fmt.Errorf("load research template: %w", err)
+	}
+
+	content, _, err := s.LLM.ChatWithTemp(ctx, tmpl.SystemPrompt, tmpl.UserPrompt, tmpl.Temperature, tmpl.MaxTokens)
+	if err != nil {
+		return nil, fmt.Errorf("llm research: %w", err)
+	}
+
+	var llmResult struct {
+		Docs     []ResourceEntry `json:"docs"`
+		Runtimes []ResourceEntry `json:"runtimes"`
+		Specs    []ResourceEntry `json:"specs"`
+	}
+	if err := llm.ParseLLMJSON(content, &llmResult); err != nil {
+		return nil, fmt.Errorf("parse research response: %w", err)
+	}
+
+	return &ResearchResult{
+		Docs:     llmResult.Docs,
+		Runtimes: llmResult.Runtimes,
+		Specs:    llmResult.Specs,
+	}, nil
 }

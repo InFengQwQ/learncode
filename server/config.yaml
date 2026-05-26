@@ -3,17 +3,22 @@ server:
     cors_origins:
         - http://localhost:5173
 database:
-    host: localhost
-    port: 5433
+    host: postgres
+    port: 5432
     user: learncode
     password: learncode
     dbname: learncode
     sslmode: disable
 storage:
-    root: ./storage
+    root: /tmp/learncode-storage
 llm:
-    default: deepseek
+    default: local
     providers:
+        - name: local
+          endpoint: http://host.docker.internal:1234/v1
+          models:
+            - qwen/qwen3.5-9b
+          api_key: not-needed
         - name: DeepSeek
           endpoint: https://api.deepseek.com/v1
           models:

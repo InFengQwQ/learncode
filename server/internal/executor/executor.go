@@ -8,12 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"learncode/internal/docker"
 )
 
 // Request is a code execution request.
 type Request struct {
-	Language string `json:"language"`
-	Code     string `json:"code"`
+	Code string `json:"code"`
 }
 
 // Result is the output of a code execution.
@@ -24,54 +25,124 @@ type Result struct {
 	DurationMs int64  `json:"duration_ms"`
 }
 
-// Config holds language-specific execution configuration.
-type Config struct {
-	Interpreter string // e.g., "python3", "node"
-	Extension   string // e.g., ".py", ".js"
-	Args        []string
+// Executor runs code either in a Docker container or on the host.
+// If Docker is available and the runtime config specifies an image,
+// it runs in a container. Otherwise it falls back to os/exec.
+type Executor struct {
+	Docker *docker.Client
 }
 
-// configFor returns the execution config for a language slug.
-// Only Python3 and Node.js are supported in this initial demo.
-func configFor(langSlug string) (Config, bool) {
-	switch strings.ToLower(langSlug) {
-	case "python":
-		return Config{Interpreter: "python3", Extension: ".py"}, true
-	case "javascript", "js", "node", "nodejs":
-		return Config{Interpreter: "node", Extension: ".js"}, true
-	default:
-		return Config{}, false
-	}
+// NewExecutor creates an Executor with the given Docker client.
+// The Docker client may be nil or unavailable — in that case,
+// execution falls back to running on the host directly.
+func NewExecutor(dockerClient *docker.Client) *Executor {
+	return &Executor{Docker: dockerClient}
 }
 
-// Execute runs the code in a subprocess with a 30-second timeout.
-func Execute(ctx context.Context, req Request) (*Result, error) {
-	cfg, ok := configFor(req.Language)
-	if !ok {
-		return nil, fmt.Errorf("unsupported language: %q (only python and javascript are supported in this demo)", req.Language)
+// Execute runs the code using the provided runtime configuration.
+// It prefers Docker container execution when available and an image
+// is specified in the config, otherwise falls back to host execution.
+func (e *Executor) Execute(ctx context.Context, rc RuntimeConfig, code string) (*Result, error) {
+	// Docker path: only needs Image + Interpreter.
+	// Missing fields (Extension, Type, RunCmd) get sensible defaults.
+	if e.Docker != nil && e.Docker.Available() && rc.Image != "" {
+		if rc.Interpreter == "" {
+			return nil, fmt.Errorf("interpreter is required for docker execution (image=%q)", rc.Image)
+		}
+		return e.runInDocker(ctx, rc, code)
 	}
 
-	// Write code to a temporary file so we can pass it to the interpreter.
+	// Host path: needs complete config with interpreter in PATH.
+	if !rc.IsComplete() {
+		return nil, fmt.Errorf("incomplete runtime config: type=%q interpreter=%q extension=%q run_cmd=%q — configure it in the version settings", rc.Type, rc.Interpreter, rc.Extension, rc.RunCmd)
+	}
+	return e.runOnHost(ctx, rc, code)
+}
+
+// runInDocker executes code inside a Docker container with security constraints.
+// Fields missing from rc get sensible defaults (Extension=".txt", Type="interpreted").
+func (e *Executor) runInDocker(ctx context.Context, rc RuntimeConfig, code string) (*Result, error) {
+	if rc.Extension == "" {
+		rc.Extension = ".txt"
+	}
+	if rc.Type == "" || rc.Type == "unknown" {
+		rc.Type = "interpreted"
+	}
+	if rc.RunCmd == "" {
+		rc.RunCmd = "{interpreter} {file}"
+	}
+
+	opts := docker.ContainerOpts{
+		Image:      rc.Image,
+		Interpreter: rc.Interpreter,
+		Code:       code,
+		Extension:  rc.Extension,
+		RunCmd:     rc.RunCmd,
+		CompileCmd: rc.CompileCmd,
+		Type:       rc.Type,
+		MemoryMB:   256,
+		CPUs:       1.0,
+		TimeoutSec: 30,
+	}
+
+	result, err := e.Docker.RunContainer(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("docker execution failed: %w", err)
+	}
+
+	return &Result{
+		Stdout:     result.Stdout,
+		Stderr:     result.Stderr,
+		ExitCode:   result.ExitCode,
+		DurationMs: result.DurationMs,
+	}, nil
+}
+
+// runOnHost executes code directly on the host using os/exec (legacy behavior).
+func (e *Executor) runOnHost(ctx context.Context, rc RuntimeConfig, code string) (*Result, error) {
 	dir, err := os.MkdirTemp("", "learncode-exec-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(dir)
 
-	srcPath := filepath.Join(dir, "main"+cfg.Extension)
-	if err := os.WriteFile(srcPath, []byte(req.Code), 0o644); err != nil {
+	srcPath := filepath.Join(dir, "main"+rc.Extension)
+	if err := os.WriteFile(srcPath, []byte(code), 0o644); err != nil {
 		return nil, fmt.Errorf("write temp file: %w", err)
 	}
 
-	// 30-second timeout to prevent infinite loops from hanging the server.
 	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	args := append(cfg.Args, srcPath)
-	cmd := exec.CommandContext(execCtx, cfg.Interpreter, args...)
-	cmd.Dir = dir
-
 	start := time.Now()
+
+	if rc.Type == "compiled" {
+		return runCompiled(execCtx, rc, dir, srcPath, start)
+	}
+	return runInterpreted(execCtx, rc, dir, srcPath, start)
+}
+
+func runInterpreted(ctx context.Context, rc RuntimeConfig, dir, srcPath string, start time.Time) (*Result, error) {
+	interpreter := rc.FindInterpreter(altInterpreters(rc.Interpreter)...)
+	if interpreter == "" {
+		return nil, fmt.Errorf("interpreter %q not found in PATH", rc.Interpreter)
+	}
+
+	basename := strings.TrimSuffix(filepath.Base(srcPath), rc.Extension)
+
+	runCmd := substitute(rc.RunCmd, map[string]string{
+		"{interpreter}": interpreter,
+		"{file}":        srcPath,
+		"{basename}":    basename,
+	})
+
+	parts := strings.Fields(runCmd)
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("empty run command")
+	}
+
+	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	cmd.Dir = dir
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
@@ -80,11 +151,82 @@ func Execute(ctx context.Context, req Request) (*Result, error) {
 	runErr := cmd.Run()
 	elapsed := time.Since(start).Milliseconds()
 
+	return buildResult(&stdout, &stderr, runErr, elapsed, ctx)
+}
+
+func runCompiled(ctx context.Context, rc RuntimeConfig, dir, srcPath string, start time.Time) (*Result, error) {
+	outputPath := filepath.Join(dir, "main")
+
+	basename := strings.TrimSuffix(filepath.Base(srcPath), rc.Extension)
+
+	// Substitute placeholders in compile command.
+	compileCmd := substitute(rc.CompileCmd, map[string]string{
+		"{file}":     srcPath,
+		"{output}":   outputPath,
+		"{basename}": basename,
+	})
+
+	parts := strings.Fields(compileCmd)
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("empty compile command")
+	}
+
+	compileStart := time.Now()
+	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	cmd.Dir = dir
+
+	var compileOut strings.Builder
+	cmd.Stdout = &compileOut
+	cmd.Stderr = &compileOut
+
+	if err := cmd.Run(); err != nil {
+		elapsed := time.Since(compileStart).Milliseconds()
+		if ctx.Err() == context.DeadlineExceeded {
+			return &Result{
+				Stderr:     "Compilation timed out after 30 seconds",
+				ExitCode:   -1,
+				DurationMs: elapsed,
+			}, nil
+		}
+		return &Result{
+			Stderr:     compileOut.String(),
+			ExitCode:   -1,
+			DurationMs: elapsed,
+		}, nil
+	}
+
+	// Substitute placeholders in run command.
+	runCmd := substitute(rc.RunCmd, map[string]string{
+		"{file}":      srcPath,
+		"{output}":    outputPath,
+		"{basename}":  basename,
+		"{classname}": basename,
+	})
+
+	parts = strings.Fields(runCmd)
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("empty run command")
+	}
+
+	cmd = exec.CommandContext(ctx, parts[0], parts[1:]...)
+	cmd.Dir = dir
+
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	elapsed := time.Since(start).Milliseconds()
+
+	return buildResult(&stdout, &stderr, runErr, elapsed, ctx)
+}
+
+func buildResult(stdout, stderr *strings.Builder, runErr error, elapsed int64, ctx context.Context) (*Result, error) {
 	exitCode := 0
 	if runErr != nil {
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
-		} else if execCtx.Err() == context.DeadlineExceeded {
+		} else if ctx.Err() == context.DeadlineExceeded {
 			return &Result{
 				Stdout:     stdout.String(),
 				Stderr:     "Execution timed out after 30 seconds",
@@ -102,4 +244,18 @@ func Execute(ctx context.Context, req Request) (*Result, error) {
 		ExitCode:   exitCode,
 		DurationMs: elapsed,
 	}, nil
+}
+
+func substitute(tmpl string, vars map[string]string) string {
+	s := tmpl
+	for k, v := range vars {
+		s = strings.ReplaceAll(s, k, v)
+	}
+	return s
+}
+
+// altInterpreters is a hook to try alternative interpreter binary names.
+// Currently returns only the primary name — no hardcoded fallbacks.
+func altInterpreters(primary string) []string {
+	return []string{primary}
 }

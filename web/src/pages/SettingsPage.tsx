@@ -233,6 +233,7 @@ export default function SettingsPage() {
                         placeholder="https://api.deepseek.com/v1"
                         className={`font-mono ${inputClass}`}
                       />
+                      <p className="text-xs text-amber-500">容器内请用 host.docker.internal 代替 localhost</p>
                     </label>
 
                     <label className="flex flex-col gap-1.5">

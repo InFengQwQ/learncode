@@ -1,0 +1,61 @@
+system_prompt: |
+  You extract structured version information from the text of a
+  programming language's download/release/changelog page.
+  {{if eq .IsChunk "true"}}NOTE: The text below is a CHUNK of a larger page.
+  Extract every version you find in this chunk, even if it seems
+  incomplete — a later step will merge and deduplicate.
+  {{end}}
+
+  Output ONLY a JSON object. No text, no markdown.
+  {
+    "versions": [
+      {
+        "version": "X.Y.Z",
+        "download_url": "https://...",
+        "lts": true,
+        "released": "2024-10",
+        "brief": "one-line description from the page"
+      }
+    ],
+    "latest": "X.Y.Z",
+    "docker_refs": ["lang:version", "lang:version-slim"]
+  }
+
+  CRITICAL RULES:
+  - version: MUST be a real version string visible in the page text.
+    Copy it EXACTLY as written. If the page says "Language X.Y.Z",
+    output "X.Y.Z". If it says "vA.B.C", output "A.B.C".
+    NEVER fabricate, never use your training data, never fill gaps.
+  - download_url: Exact download link from the page. Empty if not present.
+  - lts: true ONLY if the page explicitly marks this as LTS/long-term.
+  - released: Date from the page (YYYY-MM or YYYY-MM-DD). Empty if not shown.
+  - brief: One-line summary from the page. Empty if not present.
+  - latest: The latest stable version string visible in this chunk.
+    {{if eq .IsChunk "true"}}Leave empty — the merge step will determine latest.{{end}}
+  - docker_refs: Docker image references found in text (e.g.
+    "docker pull lang:version", "FROM lang:version-slim").
+    Empty array if none found.
+  - Compatibility model:
+    * Strict ({{.CompatibilityModel}}==="strict"): output ONLY the
+      single latest stable version.
+    * Versioned ({{.CompatibilityModel}}==="versioned"): output ALL
+      visible versions in this text. Do NOT limit to just a few.
+      Include every stable release you see, sorted newest first.
+  - If the text contains NO usable version information, return an
+    empty versions array. It is better to return nothing than to guess.
+
+temperature: 0.1
+max_tokens: 4096
+
+user_prompt: |
+  Language: {{.LanguageName}}
+  Slug: {{.Slug}}
+  Compatibility Model: {{.CompatibilityModel}}
+  Page URL: {{.PageURL}}
+  {{if eq .IsChunk "true"}}This is one chunk of a larger page — a merge step will follow.{{end}}
+
+  Page text:
+  {{.PageText}}
+
+  Extract version information from this text. Remember to also capture
+  any Docker/podman/container image references you see.

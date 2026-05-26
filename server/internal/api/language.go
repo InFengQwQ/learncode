@@ -22,6 +22,7 @@ func (h *LanguageHandler) Routes(r chi.Router) {
 	r.Post("/", h.Create)
 	r.Post("/init", h.Init)
 	r.Delete("/{id}", h.Delete)
+	r.Post("/{id}/research", h.Research)
 }
 
 func (h *LanguageHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -114,4 +115,28 @@ func (h *LanguageHandler) Init(w http.ResponseWriter, r *http.Request) {
 	default:
 		RespondError(w, http.StatusBadRequest, "step must be 'query' or 'confirm'")
 	}
+}
+
+// Research triggers deep multi-source resource discovery for an existing Language.
+// POST /api/v1/languages/{id}/research
+// Returns docs[], runtimes[], specs[] with authoritative URLs.
+func (h *LanguageHandler) Research(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if h.InitSvc == nil {
+		RespondError(w, http.StatusInternalServerError, "init service not configured")
+		return
+	}
+
+	lang, err := h.Svc.GetByID(r.Context(), id)
+	if err != nil {
+		RespondError(w, http.StatusNotFound, "language not found")
+		return
+	}
+
+	result, err := h.InitSvc.Research(r.Context(), lang)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	RespondJSON(w, http.StatusOK, result)
 }

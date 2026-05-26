@@ -1,0 +1,39 @@
+system_prompt: |
+  You merge and deduplicate version entries that were extracted from
+  multiple chunks of the same page. Some entries may be duplicates
+  (same version with slightly different formatting).
+
+  Output ONLY a JSON array. No text, no markdown.
+  [
+    {
+      "version": "X.Y.Z",
+      "download_url": "https://...",
+      "lts": true,
+      "released": "2024-10",
+      "brief": "one-line description"
+    }
+  ]
+
+  Rules:
+  - Merge duplicates: if two entries have the same version string,
+    keep the one with more fields populated.
+  - Drop entries with obviously fake version strings (e.g. "1.0" when
+    all other versions are "3.x", or version strings that look like
+    dates or random numbers).
+  - Sort newest versions first (by version number, not date).
+  - If {{.CompatibilityModel}} is "strict", output only the single
+    latest version.
+  - Do NOT fabricate any fields. Only output what is in the input.
+
+temperature: 0.1
+max_tokens: 2048
+
+user_prompt: |
+  Language: {{.LanguageName}}
+  Compatibility Model: {{.CompatibilityModel}}
+  Page: {{.PageURL}}
+
+  Entries extracted from multiple chunks:
+  {{.ChunkedVersions}}
+
+  Merge these into a clean, deduplicated list. Output the JSON array.

@@ -24,9 +24,7 @@ func (c *Client) SearchWikipedia(ctx context.Context, query string) ([]WikiHit, 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "LearnCode/1.0")
-
-	resp, err := c.http.Do(req)
+	resp, err := c.doWiki(req)
 	if err != nil {
 		return nil, fmt.Errorf("wikipedia search: %w", err)
 	}
@@ -72,9 +70,7 @@ func (c *Client) GetPageCategories(ctx context.Context, title string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "LearnCode/1.0")
-
-	resp, err := c.http.Do(req)
+	resp, err := c.doWiki(req)
 	if err != nil {
 		return nil, fmt.Errorf("wikipedia categories: %w", err)
 	}
@@ -119,9 +115,7 @@ func (c *Client) GetInfobox(ctx context.Context, title string) (*InfoboxData, er
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "LearnCode/1.0")
-
-	resp, err := c.http.Do(req)
+	resp, err := c.doWiki(req)
 	if err != nil {
 		return nil, fmt.Errorf("wikipedia infobox: %w", err)
 	}
@@ -145,16 +139,14 @@ func (c *Client) GetInfobox(ctx context.Context, title string) (*InfoboxData, er
 // Uses the pageimages API which returns the article's representative image as a
 // thumbnail. Returns empty string if the article has no image.
 func (c *Client) GetPageImage(ctx context.Context, title string) (string, error) {
-	u := fmt.Sprintf("%s?action=query&titles=%s&prop=pageimages&format=json&pithumbsize=120",
+	u := fmt.Sprintf("%s?action=query&titles=%s&prop=pageimages&format=json&pithumbsize=120&redirects=true",
 		c.baseURL, url.QueryEscape(title))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "LearnCode/1.0")
-
-	resp, err := c.http.Do(req)
+	resp, err := c.doWiki(req)
 	if err != nil {
 		return "", fmt.Errorf("wikipedia pageimage: %w", err)
 	}
@@ -179,6 +171,42 @@ func (c *Client) GetPageImage(ctx context.Context, title string) (string, error)
 		}
 	}
 	return "", nil
+}
+
+// GetExternalLinks returns the external links from a Wikipedia page.
+// These are links in the "External links" section that point to official
+// documentation, standards, and other authoritative resources.
+func (c *Client) GetExternalLinks(ctx context.Context, title string) ([]string, error) {
+	u := fmt.Sprintf("%s?action=parse&page=%s&prop=externallinks&format=json",
+		c.baseURL, url.QueryEscape(title))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doWiki(req)
+	if err != nil {
+		return nil, fmt.Errorf("wikipedia externallinks: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Parse struct {
+			Externallinks []string `json:"externallinks"`
+		} `json:"parse"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("wikipedia externallinks parse: %w", err)
+	}
+
+	// Filter out Wikipedia-internal and non-HTTP links.
+	var links []string
+	for _, link := range result.Parse.Externallinks {
+		if strings.HasPrefix(link, "http://") || strings.HasPrefix(link, "https://") {
+			links = append(links, link)
+		}
+	}
+	return links, nil
 }
 
 // ScoreSignal returns a signal score based on Wikipedia categories and infobox.
