@@ -32,3 +32,11 @@ storage/
 # Claude Code local settings
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Accesser runtime files
+CERT/
+config.toml
+rules.toml
+
+# Test binaries
+server/service.test.exe
