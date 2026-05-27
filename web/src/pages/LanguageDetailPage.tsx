@@ -311,7 +311,13 @@ export default function LanguageDetailPage() {
                   {lang.slug}
                 </code>
                 <span>·</span>
-                <Badge variant={lang.compatibility_model === 'strict' ? 'info' : 'warning'}>
+                <Badge variant={
+                  lang.compatibility_model === 'strict'
+                    ? 'info'
+                    : lang.compatibility_model === 'versioned'
+                      ? 'warning'
+                      : 'default'
+                }>
                   {lang.compatibility_model}
                 </Badge>
                 <span>·</span>

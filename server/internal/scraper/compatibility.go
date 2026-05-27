@@ -2,17 +2,18 @@ package scraper
 
 import "strings"
 
-// CompatibilityModel determines the compatibility model for a programming language.
-// It uses only Wikipedia data — no hardcoded knowledge about any specific language.
+// CompatibilityModel returns a preliminary compatibility model based on Wikipedia categories.
+// This is a fast Go-level heuristic — the LLM has final say during the analysis phase.
+// Possible values:
+//   - "none":      esoteric languages / DSLs without versioning concerns
+//   - "versioned": default; most languages have multiple concurrent versions (Python, Rust, C++)
+//   - "strict":    determined later by LLM; the language has a single stable version (Go, Java)
 func CompatibilityModel(name string, categories []string, info *InfoboxData) string {
-	// Esoteric languages don't have versioning concerns
 	for _, c := range categories {
 		if strings.Contains(strings.ToLower(c), "esoteric") {
 			return "none"
 		}
 	}
-	// Everything else: default to "versioned" — most languages have multiple versions.
-	// The user can adjust later if needed.
 	return "versioned"
 }
 

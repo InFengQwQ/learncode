@@ -116,7 +116,9 @@ export default function AddLanguagePage() {
                   variant={
                     suggestion.compatibility_model === 'strict'
                       ? 'info'
-                      : 'warning'
+                      : suggestion.compatibility_model === 'versioned'
+                        ? 'warning'
+                        : 'default'
                   }
                 >
                   {suggestion.compatibility_model}

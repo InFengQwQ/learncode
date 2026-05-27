@@ -35,7 +35,7 @@ func (s *LanguageService) Create(ctx context.Context, input CreateLanguageInput)
 	if input.Slug == "" {
 		return nil, errors.New("slug is required")
 	}
-	if input.CompatibilityModel != "strict" && input.CompatibilityModel != "versioned" {
+	if input.CompatibilityModel != "strict" && input.CompatibilityModel != "versioned" && input.CompatibilityModel != "none" {
 		return nil, fmt.Errorf("invalid compatibility_model: %s", input.CompatibilityModel)
 	}
 

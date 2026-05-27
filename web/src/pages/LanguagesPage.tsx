@@ -78,7 +78,13 @@ export default function LanguagesPage() {
                 </div>
                 <div className="mt-4 flex items-center gap-2">
                   <Badge
-                    variant={lang.compatibility_model === 'strict' ? 'info' : 'warning'}
+                    variant={
+                      lang.compatibility_model === 'strict'
+                        ? 'info'
+                        : lang.compatibility_model === 'versioned'
+                          ? 'warning'
+                          : 'default'
+                    }
                   >
                     {lang.compatibility_model}
                   </Badge>
