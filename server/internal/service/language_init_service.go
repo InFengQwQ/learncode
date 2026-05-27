@@ -112,18 +112,9 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 	var versions []DiscoveredVersion
 	var latestVer string
 
-	if info != nil && info.Website != "" {
-		vs, err := s.discoverVersionsFromSource(ctx, analysis.OfficialName, slug, compatModel, info.Website, nil)
-		if err != nil {
-			slog.Warn("version discovery from web failed, falling back to Wikipedia infobox",
-				"language", analysis.OfficialName, "error", err)
-		}
-		if vs != nil {
-			versions = vs
-		}
-	}
-
-	if len(versions) == 0 && info != nil && info.LatestVersion != "" {
+	// Fast path: Wikipedia infobox often has the latest version.
+	// Use it first to avoid slow web scraping when possible.
+	if info != nil && info.LatestVersion != "" {
 		v := cleanWikiVersion(info.LatestVersion)
 		if v != "" {
 			versions = []DiscoveredVersion{{
@@ -132,6 +123,19 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 				Brief:    fmt.Sprintf("Latest stable version of %s", analysis.OfficialName),
 				Source:   "wikipedia",
 			}}
+		}
+	}
+
+	// Only do slow web discovery if Wikipedia had no version.
+	// This saves ~10 min per query for languages with Wikipedia version info.
+	if len(versions) == 0 && info != nil && info.Website != "" {
+		vs, err := s.discoverVersionsFromSource(ctx, analysis.OfficialName, slug, compatModel, info.Website, nil)
+		if err != nil {
+			slog.Warn("version discovery from web failed",
+				"language", analysis.OfficialName, "error", err)
+		}
+		if vs != nil {
+			versions = vs
 		}
 	}
 
@@ -155,45 +159,56 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 }
 
 func (s *LanguageInitService) llmAnalyze(ctx context.Context, title string, cats []string, info *scraper.InfoboxData) (*analyzeResult, error) {
-	vars := map[string]string{"Title": title}
-	if info != nil {
-		if info.InfoboxType != "" {
-			vars["InfoboxType"] = info.InfoboxType
-		}
-		if info.Website != "" {
-			vars["Website"] = info.Website
-		}
-		if info.Developer != "" {
-			vars["Developer"] = info.Developer
-		}
-		if info.FirstAppeared != "" {
-			vars["FirstAppeared"] = info.FirstAppeared
-		}
-		if info.LatestVersion != "" {
-			vars["LatestVersion"] = info.LatestVersion
-		}
-		if info.Typing != "" {
-			vars["Typing"] = info.Typing
-		}
-	}
-	if len(cats) > 0 {
-		vars["Categories"] = strings.Join(cats, ", ")
-	}
-
-	tmpl, err := llm.LoadTemplate(s.PromptDir+"/language_analyze.yaml", vars)
+	// Step 1: Extract official name only (narrow task, minimal reasoning).
+	tmpl1, err := llm.LoadTemplate(s.PromptDir+"/language_analyze.yaml", map[string]string{"Title": title})
 	if err != nil {
-		return nil, fmt.Errorf("load template: %w", err)
+		return nil, fmt.Errorf("load name template: %w", err)
 	}
-
-	content, _, err := s.LLM.ChatWithTemp(ctx, tmpl.SystemPrompt, tmpl.UserPrompt, tmpl.Temperature, tmpl.MaxTokens)
+	content, _, err := s.LLM.ChatWithTemp(ctx, tmpl1.SystemPrompt, tmpl1.UserPrompt, tmpl1.Temperature, tmpl1.MaxTokens)
 	if err != nil {
-		return nil, fmt.Errorf("llm chat: %w", err)
+		return nil, fmt.Errorf("extract name: %w", err)
 	}
-
 	var result analyzeResult
 	if err := llm.ParseLLMJSON(content, &result); err != nil {
-		return nil, fmt.Errorf("parse llm response: %w", err)
+		return nil, fmt.Errorf("parse name: %w", err)
 	}
+	if result.OfficialName == "" {
+		return nil, fmt.Errorf("llm returned empty official name")
+	}
+
+	// Step 2: Generate description from infobox data (separate narrow call).
+	descVars := map[string]string{"OfficialName": result.OfficialName}
+	if info != nil {
+		if info.InfoboxType != "" {
+			descVars["InfoboxType"] = info.InfoboxType
+		}
+		if info.Developer != "" {
+			descVars["Developer"] = info.Developer
+		}
+		if info.FirstAppeared != "" {
+			descVars["FirstAppeared"] = info.FirstAppeared
+		}
+	}
+	tmpl2, err := llm.LoadTemplate(s.PromptDir+"/language_describe.yaml", descVars)
+	if err != nil {
+		// Description is optional; continue without it.
+		slog.Warn("failed to load description template, skipping description", "error", err)
+		return &result, nil
+	}
+	descContent, _, descErr := s.LLM.ChatWithTemp(ctx, tmpl2.SystemPrompt, tmpl2.UserPrompt, tmpl2.Temperature, tmpl2.MaxTokens)
+	if descErr != nil {
+		slog.Warn("failed to generate description, continuing without it", "error", descErr)
+		return &result, nil
+	}
+	var descResult struct {
+		Description string `json:"description"`
+	}
+	if err := llm.ParseLLMJSON(descContent, &descResult); err != nil {
+		slog.Warn("failed to parse description, continuing without it", "error", err)
+		return &result, nil
+	}
+	result.Description = descResult.Description
+
 	return &result, nil
 }
 
@@ -472,7 +487,7 @@ func buildCandidateSources(websiteURL string, wikiLinks []string) []sourceCandid
 	}
 	if websiteURL != "" {
 		base := strings.TrimRight(websiteURL, "/")
-		for _, p := range []string{"/downloads", "/download", "/releases", "/changelog"} {
+		for _, p := range []string{"/releases", "/downloads"} {
 			candidates = append(candidates, sourceCandidate{url: base + p, sourceType: "html"})
 		}
 	}
@@ -480,7 +495,6 @@ func buildCandidateSources(websiteURL string, wikiLinks []string) []sourceCandid
 		if strings.Contains(c.url, "github.com/") && !strings.Contains(c.url, "api.github.com") {
 			if apiURL := githubRepoToAPI(c.url); apiURL != "" {
 				candidates = append([]sourceCandidate{{url: apiURL, sourceType: "structured"}}, candidates...)
-				break
 			}
 		}
 	}
@@ -574,73 +588,61 @@ func (s *LanguageInitService) fetchStructuredVersions(ctx context.Context, u str
 }
 
 func extractVersionsFromJSON(data interface{}) []DiscoveredVersion {
-	switch d := data.(type) {
+	var versions []DiscoveredVersion
+	extractVersionsRecursive(data, &versions)
+	return dedupVersions(versions)
+}
+
+// extractVersionsRecursive walks arbitrary JSON structures looking for version strings.
+// It does NOT assume any specific API format — it looks for objects containing
+// version-like values (matching ^\d+\.\d+) in fields named version, name, tag_name,
+// or any string value that looks like a version.
+func extractVersionsRecursive(node interface{}, versions *[]DiscoveredVersion) {
+	switch n := node.(type) {
 	case map[string]interface{}:
-		if results, ok := d["results"].([]interface{}); ok {
-			var versions []DiscoveredVersion
-			for _, r := range results {
-				if m, ok := r.(map[string]interface{}); ok {
-					if name, ok := m["name"].(string); ok && looksLikeVersion(name) {
-						versions = append(versions, DiscoveredVersion{Version: cleanTag(name), ImageTag: name})
+		// Check if this object has a version-like field.
+		for _, key := range []string{"version", "name", "tag_name", "tag", "ref", "release"} {
+			if val, ok := n[key].(string); ok && looksLikeVersion(strings.TrimPrefix(val, "v")) {
+				ver := strings.TrimPrefix(strings.TrimPrefix(val, "v"), "go")
+				ver = cleanTag(ver)
+				if looksLikeVersion(ver) {
+					// Skip prerelease/snapshot markers
+					skip := false
+					for _, mk := range []string{"prerelease", "draft", "unstable"} {
+						if b, ok := n[mk].(bool); ok && b {
+							skip = true
+							break
+						}
+					}
+					if !skip {
+						dv := DiscoveredVersion{Version: ver}
+						if _, ok := n["name"].(string); ok {
+							dv.ImageTag = val
+						}
+						*versions = append(*versions, dv)
 					}
 				}
 			}
-			return versions
 		}
-		if releases, ok := d["releases"].(map[string]interface{}); ok {
-			var versions []DiscoveredVersion
-			for ver := range releases {
-				if looksLikeVersion(ver) {
-					versions = append(versions, DiscoveredVersion{Version: ver})
+		// Check keys that might be version numbers themselves (e.g. "3.12.0": {...})
+		for k, v := range n {
+			if looksLikeVersion(k) {
+				if obj, ok := v.(map[string]interface{}); ok {
+					extractVersionsRecursive(obj, versions)
+				} else {
+					*versions = append(*versions, DiscoveredVersion{Version: k})
 				}
 			}
-			if info, ok := d["info"].(map[string]interface{}); ok {
-				if latest, ok := info["version"].(string); ok {
-					sortVersionsByLatest(versions, latest)
-				}
-			}
-			return versions
 		}
-		if npmVersions, ok := d["versions"].(map[string]interface{}); ok {
-			var versions []DiscoveredVersion
-			for ver := range npmVersions {
-				if looksLikeVersion(ver) {
-					versions = append(versions, DiscoveredVersion{Version: ver})
-				}
-			}
-			if distTags, ok := d["dist-tags"].(map[string]interface{}); ok {
-				if latest, ok := distTags["latest"].(string); ok {
-					sortVersionsByLatest(versions, latest)
-				}
-			}
-			return versions
+		// Recurse into all values
+		for _, v := range n {
+			extractVersionsRecursive(v, versions)
 		}
 	case []interface{}:
-		var versions []DiscoveredVersion
-		for _, item := range d {
-			if m, ok := item.(map[string]interface{}); ok {
-				if tag, ok := m["tag_name"].(string); ok {
-					ver := strings.TrimPrefix(tag, "v")
-					if looksLikeVersion(ver) {
-						if isPrerelease, _ := m["prerelease"].(bool); !isPrerelease {
-							versions = append(versions, DiscoveredVersion{Version: ver})
-						}
-					}
-					continue
-				}
-				if ver, ok := m["version"].(string); ok {
-					ver = strings.TrimPrefix(ver, "go")
-					if looksLikeVersion(ver) {
-						if stable, _ := m["stable"].(bool); stable {
-							versions = append(versions, DiscoveredVersion{Version: ver})
-						}
-					}
-				}
-			}
+		for _, item := range n {
+			extractVersionsRecursive(item, versions)
 		}
-		return versions
 	}
-	return nil
 }
 
 func looksLikeVersion(s string) bool { return regexp.MustCompile(`^\d+\.\d+`).MatchString(s) }

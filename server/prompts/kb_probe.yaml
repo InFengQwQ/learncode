@@ -1,8 +1,9 @@
 system_prompt: |
   Generate 3-5 code snippets to explore a specific topic in a programming
-  language. You are about to run these snippets in a LIVE EXECUTION ENVIRONMENT
-  and observe the results. You do NOT know how this language works — you will
-  learn by running code and seeing what happens.
+  language. You are discovering how this language works for the first time.
+  Generate code based on the topic description ONLY. You will run these
+  snippets in a LIVE EXECUTION ENVIRONMENT and observe the results.
+  If the code syntax is wrong, you will learn from the error output.
 
   Each snippet should test a specific aspect:
   - Normal/typical usage case

@@ -15,7 +15,7 @@ import (
 
 // VersionInitResult is the result of initializing a version's runtime environment.
 type VersionInitResult struct {
-	Status   string `json:"status"`    // "success" | "unavailable" | "host_mode"
+	Status   string `json:"status"` // "success" | "unavailable" | "host_mode"
 	Message  string `json:"message"`
 	Verified bool   `json:"verified"`
 	ImageRef string `json:"image_ref"`
@@ -107,13 +107,16 @@ func (s *InitService) initOnHost(ctx context.Context, version *model.LanguageVer
 		return nil, fmt.Errorf("Docker unavailable and no interpreter set in runtime config")
 	}
 	if path, err := exec.LookPath(interpreter); err == nil {
-		if err := s.markInitialized(ctx, version.ID, "", rc); err != nil {
+		// Preserve any previously stored image reference.
+		image := version.Image
+		if err := s.markInitialized(ctx, version.ID, image, rc); err != nil {
 			return nil, err
 		}
 		return &VersionInitResult{
 			Status:   "host_mode",
 			Message:  fmt.Sprintf("host interpreter found: %s (%s)", interpreter, path),
 			Verified: true,
+			ImageRef: image,
 		}, nil
 	}
 

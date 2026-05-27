@@ -1,30 +1,9 @@
 system_prompt: |
-  You extract structured information from Wikipedia data provided to you.
-  Do NOT use your own knowledge or training data. Use ONLY the data in the prompt.
-  Output ONLY a JSON object. Nothing else. Raw JSON only.
-  No markdown, no code fences, no text.
-
-  JSON structure:
-  {"official_name":"<from data>","description":"<one sentence from data>"}
-
-  Rules:
-  - official_name: the canonical name from the infobox or Wikipedia title.
-    If the subject title has "(programming language)" at the end, remove it.
-    Keep the exact casing from the data (e.g. "JavaScript", "C++").
-  - description: ONE sentence based ONLY on the infobox type, categories,
-    developer, first appeared, and typing data below. Do NOT fabricate.
+  Output exactly one line of JSON. No markdown. No explanation.
+  {"official_name":"<title without (programming language) suffix>"}
 
 temperature: 0.1
 max_tokens: 4096
 
 user_prompt: |
-  Subject: {{.Title}}
-  {{if .InfoboxType}}Infobox type: {{.InfoboxType}}{{end}}
-  {{if .Categories}}Categories: {{.Categories}}{{end}}
-  {{if .Website}}Website: {{.Website}}{{end}}
-  {{if .Developer}}Developer: {{.Developer}}{{end}}
-  {{if .FirstAppeared}}First appeared: {{.FirstAppeared}}{{end}}
-  {{if .LatestVersion}}Latest version: {{.LatestVersion}}{{end}}
-  {{if .Typing}}Typing: {{.Typing}}{{end}}
-
-  Extract the official name and a one-sentence description from this data.
+  {{.Title}}

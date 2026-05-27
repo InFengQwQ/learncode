@@ -14,7 +14,7 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port       int      `yaml:"port"`
+	Port        int      `yaml:"port"`
 	CORSOrigins []string `yaml:"cors_origins"`
 }
 

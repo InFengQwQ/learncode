@@ -34,9 +34,9 @@ storage/
 .claude/scheduled_tasks.lock
 
 # Accesser runtime files
-CERT/
-config.toml
-rules.toml
+server/accesser/CERT/
+server/accesser/config.toml
+server/accesser/rules.toml
 
 # Test binaries
 server/service.test.exe

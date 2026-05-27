@@ -93,11 +93,11 @@ func main() {
 	var initSvc *service.LanguageInitService
 	if llmSvc != nil {
 		initSvc = &service.LanguageInitService{
-			LangSvc:       langSvc,
-			VersionSvc:    versionSvc,
-			LLM:           llmSvc,
-			PromptDir:     "prompts",
-			Scraper:       newScraperClient(),
+			LangSvc:        langSvc,
+			VersionSvc:     versionSvc,
+			LLM:            llmSvc,
+			PromptDir:      "prompts",
+			Scraper:        newScraperClient(),
 			InitVersionSvc: initVersionSvc,
 		}
 	}
@@ -136,7 +136,7 @@ func main() {
 			r.Post("/{versionId}/initialize", versionHandler.Initialize)
 			r.Get("/{versionId}/knowledge", versionHandler.Knowledge)
 			r.Post("/{versionId}/build-knowledge", versionHandler.BuildKnowledge)
-				r.Patch("/{versionId}/status", versionHandler.SetStatus)
+			r.Patch("/{versionId}/status", versionHandler.SetStatus)
 		})
 		r.Route("/config", configHandler.Routes)
 		r.Route("/execute", executeHandler.Routes)

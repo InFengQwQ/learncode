@@ -6,16 +6,16 @@ import (
 )
 
 type Language struct {
-	ID                 string          `db:"id"                  json:"id"`
-	Name               string          `db:"name"                json:"name"`
-	Slug               string          `db:"slug"                json:"slug"`
-	Icon               string          `db:"icon"                json:"icon"`
-	CompatibilityModel string          `db:"compatibility_model" json:"compatibility_model"`
-	SourceURLs         json.RawMessage `db:"source_urls"         json:"source_urls"`
+	ID                 string           `db:"id"                  json:"id"`
+	Name               string           `db:"name"                json:"name"`
+	Slug               string           `db:"slug"                json:"slug"`
+	Icon               string           `db:"icon"                json:"icon"`
+	CompatibilityModel string           `db:"compatibility_model" json:"compatibility_model"`
+	SourceURLs         json.RawMessage  `db:"source_urls"         json:"source_urls"`
 	ResearchData       *json.RawMessage `db:"research_data"       json:"research_data"`
-	ResearchedAt       *time.Time      `db:"researched_at"       json:"researched_at"`
-	Status             string          `db:"status"               json:"status"` // "inactive" | "active"
-	CreatedAt          time.Time       `db:"created_at"          json:"created_at"`
+	ResearchedAt       *time.Time       `db:"researched_at"       json:"researched_at"`
+	Status             string           `db:"status"               json:"status"` // "inactive" | "active"
+	CreatedAt          time.Time        `db:"created_at"          json:"created_at"`
 }
 
 type LanguageVersion struct {

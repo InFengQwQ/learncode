@@ -25,7 +25,7 @@ type KBExplorer struct {
 }
 
 type probeSpec struct {
-	Code      string `json:"code"`
+	Code       string `json:"code"`
 	Hypothesis string `json:"hypothesis"`
 }
 
@@ -80,7 +80,7 @@ func (e *KBExplorer) generateProbes(
 		"Slug":         lang.Slug,
 		"Version":      ver.Version,
 		"Topic":        spec.Topic,
-		"Brief":         spec.Brief,
+		"Brief":        spec.Brief,
 	}
 
 	tmpl, err := llm.LoadTemplate(e.PromptDir+"/kb_probe.yaml", vars)
@@ -133,7 +133,7 @@ func (e *KBExplorer) synthesize(
 		"Slug":         lang.Slug,
 		"Version":      ver.Version,
 		"Topic":        spec.Topic,
-		"Brief":         spec.Brief,
+		"Brief":        spec.Brief,
 		"Results":      string(resultsJSON),
 	}
 

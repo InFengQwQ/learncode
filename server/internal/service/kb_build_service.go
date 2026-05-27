@@ -131,9 +131,24 @@ func summarizeEntries(entries []model.KnowledgeEntry) string {
 	}
 	var lines []string
 	for _, e := range entries {
-		lines = append(lines, "- "+e.Topic)
+		// Extract a brief description from the content JSON if available.
+		var content struct {
+			Description string `json:"description"`
+		}
+		summary := ""
+		if json.Unmarshal(e.Content, &content) == nil && content.Description != "" {
+			summary = " — " + truncateSummary(content.Description, 120)
+		}
+		lines = append(lines, "- "+e.Topic+" ("+e.Category+")"+summary)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func truncateSummary(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func (s *KBBuildService) generateTopics(ctx context.Context, ver *model.LanguageVersion, lang *model.Language) ([]TopicSpec, error) {
@@ -141,12 +156,30 @@ func (s *KBBuildService) generateTopics(ctx context.Context, ver *model.Language
 		return nil, fmt.Errorf("llm service not available")
 	}
 
+	// Extract description from language source_urls (set during language init/confirm).
+	description := extractDescriptionField(lang.SourceURLs)
+	// Also extract description from existing knowledge as fallback.
+	if description == "" {
+		existing, _ := s.KnowledgeRepo.ListByLanguage(ctx, lang.ID)
+		if len(existing) > 0 {
+			for _, e := range existing {
+				var content struct {
+					Description string `json:"description"`
+				}
+				if json.Unmarshal(e.Content, &content) == nil && content.Description != "" {
+					description = content.Description
+					break
+				}
+			}
+		}
+	}
+
 	vars := map[string]string{
 		"LanguageName":       lang.Name,
 		"Slug":               lang.Slug,
 		"Version":            ver.Version,
 		"CompatibilityModel": lang.CompatibilityModel,
-		"Description":        "", // populated from language research data when available
+		"Description":        description,
 		"ExistingKnowledge":  "", // populated when building version-specific topics
 	}
 
@@ -180,6 +213,21 @@ func (s *KBBuildService) generateTopics(ctx context.Context, ver *model.Language
 	return topics, nil
 }
 
+// extractDescriptionField extracts a "description" string from a JSONB source_urls value.
+func extractDescriptionField(sourceURLs json.RawMessage) string {
+	if len(sourceURLs) == 0 {
+		return ""
+	}
+	var data map[string]interface{}
+	if json.Unmarshal(sourceURLs, &data) != nil {
+		return ""
+	}
+	if desc, ok := data["description"].(string); ok && desc != "" {
+		return desc
+	}
+	return ""
+}
+
 // buildEntry builds a single knowledge entry.
 // Factual entries MUST go through Explorer (environment-interactive discovery).
 // Normative entries use LLM with existing factual knowledge as context.
@@ -207,7 +255,7 @@ func (s *KBBuildService) buildEntry(ctx context.Context, ver *model.LanguageVers
 		if err != nil {
 			return nil, fmt.Errorf("explore topic %q: %w", spec.Topic, err)
 		}
-		if err := s.KnowledgeRepo.Create(ctx, entry); err != nil {
+		if err := s.KnowledgeRepo.Upsert(ctx, entry); err != nil {
 			return nil, fmt.Errorf("save explorer entry %q: %w", spec.Topic, err)
 		}
 		return entry, nil
@@ -254,7 +302,7 @@ func (s *KBBuildService) buildEntry(ctx context.Context, ver *model.LanguageVers
 		Source:     "llm",
 	}
 
-	if err := s.KnowledgeRepo.Create(ctx, entry); err != nil {
+	if err := s.KnowledgeRepo.Upsert(ctx, entry); err != nil {
 		return nil, fmt.Errorf("save knowledge entry %q: %w", spec.Topic, err)
 	}
 
@@ -305,6 +353,9 @@ func (s *KBBuildService) verifyFactualEntries(ctx context.Context, ver *model.La
 			raw["verified"] = verified
 			if updated, err := json.Marshal(raw); err == nil {
 				entry.Content = updated
+				if err := s.KnowledgeRepo.UpdateContent(ctx, entry.ID, updated); err != nil {
+					slog.Warn("failed to persist verified flag", "topic", entry.Topic, "error", err)
+				}
 			}
 		}
 

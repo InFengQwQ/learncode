@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -138,5 +140,14 @@ func (h *LanguageHandler) Research(w http.ResponseWriter, r *http.Request) {
 		RespondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Persist research result so version creation can proceed.
+	researchJSON, _ := json.Marshal(result)
+	now := time.Now()
+	sourceJSON, _ := json.Marshal(lang.SourceURLs)
+	if err := h.Svc.UpdateFromResearch(r.Context(), lang.ID, researchJSON, now, sourceJSON); err != nil {
+		slog.Warn("failed to persist research result", "error", err)
+	}
+
 	RespondJSON(w, http.StatusOK, result)
 }

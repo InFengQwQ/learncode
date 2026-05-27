@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -86,7 +87,7 @@ func (p *openAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	type openAIChoice struct {
 		Message struct {
 			Content          string `json:"content"`
-				ReasoningContent string `json:"reasoning_content"`
+			ReasoningContent string `json:"reasoning_content"`
 		} `json:"message"`
 	}
 	type openAIUsage struct {
@@ -111,9 +112,21 @@ func (p *openAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	content := parsed.Choices[0].Message.Content
 	// Reasoning models (e.g., qwen3.5) may produce reasoning_content
 	// but leave content empty when max_tokens is too low.
-	// Fall back to reasoning_content as a best-effort recovery.
-	if content == "" {
-		content = parsed.Choices[0].Message.ReasoningContent
+	// Try to extract the final answer from the end of reasoning_content.
+	if content == "" && parsed.Choices[0].Message.ReasoningContent != "" {
+		reasoning := parsed.Choices[0].Message.ReasoningContent
+		// Qwen models put their final answer at the end of the thinking process.
+		// Look for JSON object at the end of reasoning text.
+		if lastBrace := strings.LastIndex(reasoning, "{"); lastBrace >= 0 {
+			tail := reasoning[lastBrace:]
+			if ExtractJSONBlock(tail) != "" {
+				content = ExtractJSONBlock(tail)
+			}
+		}
+		// If no JSON found at end, use entire reasoning content (existing behavior).
+		if content == "" {
+			content = reasoning
+		}
 	}
 	if content == "" {
 		return nil, fmt.Errorf("empty response from llm")

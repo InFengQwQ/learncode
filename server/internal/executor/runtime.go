@@ -2,7 +2,6 @@ package executor
 
 import (
 	"encoding/json"
-	"fmt"
 	"os/exec"
 )
 
@@ -25,11 +24,12 @@ func DefaultImage(slug string) (string, bool) {
 
 // DefaultRuntimeConfig returns a minimal runtime config for a language slug.
 // Interpreter defaults to the slug (Docker image name ≈ binary name).
-// Type remains "unknown" so IsComplete() returns false — the config must be
-// completed by init (Docker pull) or manual configuration.
+// Type defaults to "interpreted" — most languages are interpreted or have
+// an interactive mode. The config is intentionally minimal; real configuration
+// happens during init (Docker pull) or manual setup.
 func DefaultRuntimeConfig(slug string) RuntimeConfig {
 	return RuntimeConfig{
-		Type:        "unknown",
+		Type:        "interpreted",
 		Interpreter: slug,
 		Extension:   ".txt",
 		RunCmd:      "{interpreter} {file}",
@@ -79,6 +79,3 @@ func ParseRuntimeConfig(raw []byte) (RuntimeConfig, error) {
 	}
 	return rc, nil
 }
-
-// Ensure fmt is used (needed for future dynamic runtime config generation).
-var _ = fmt.Sprintf

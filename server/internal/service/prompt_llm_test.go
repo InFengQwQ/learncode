@@ -110,11 +110,11 @@ func TestExtractVersionsPrompt(t *testing.T) {
 	Docker: docker pull python:3.13, docker pull python:3.13-slim, python:3.12, python:3.12-slim`
 
 	vars := map[string]string{
-		"LanguageName":      "Python",
-		"Slug":              "python",
+		"LanguageName":       "Python",
+		"Slug":               "python",
 		"CompatibilityModel": "versioned",
-		"PageURL":           "https://www.python.org/downloads/",
-		"PageText":          pageText,
+		"PageURL":            "https://www.python.org/downloads/",
+		"PageText":           pageText,
 	}
 
 	tmpl, err := llm.LoadTemplate("../../prompts/extract_versions.yaml", vars)
@@ -197,11 +197,11 @@ func TestExtractVersionsStrict(t *testing.T) {
 	Docker: docker pull golang:1.24`
 
 	vars := map[string]string{
-		"LanguageName":      "Go",
-		"Slug":              "go",
+		"LanguageName":       "Go",
+		"Slug":               "go",
 		"CompatibilityModel": "strict",
-		"PageURL":           "https://go.dev/dl/",
-		"PageText":          pageText,
+		"PageURL":            "https://go.dev/dl/",
+		"PageText":           pageText,
 	}
 
 	tmpl, err := llm.LoadTemplate("../../prompts/extract_versions.yaml", vars)

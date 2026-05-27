@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { languages, versions as versionsApi, execute, knowledge, type Language, type LanguageVersion, type KnowledgeEntry, type VersionInitResult } from '../api/client'
+import { languages, versions as versionsApi, execute, knowledge, type Language, type LanguageVersion, type KnowledgeEntry, type VersionInitResult, type ResearchResult } from '../api/client'
 import { formatDate, isIconURL } from '../lib/utils'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
@@ -32,6 +32,35 @@ export default function LanguageDetailPage() {
   const [expandedKB, setExpandedKB] = useState<string | null>(null)
   const [kbEntries, setKBEntries] = useState<Record<string, { shared: KnowledgeEntry[]; private: KnowledgeEntry[] }>>({})
   const [loadingKB, setLoadingKB] = useState<string | null>(null)
+
+  // Research state
+  const [researching, setResearching] = useState(false)
+  const [researchResult, setResearchResult] = useState<ResearchResult | null>(null)
+  const [researchError, setResearchError] = useState('')
+
+  async function handleResearch() {
+    if (!id) return
+    setResearching(true)
+    setResearchError('')
+    setResearchResult(null)
+    try {
+      const res = await languages.research(id)
+      if (res.ok && res.data) {
+        setResearchResult(res.data)
+        // Refresh language to get updated researched_at
+        const langRes = await languages.get(id)
+        if (langRes.ok && langRes.data) {
+          setLang(langRes.data)
+        }
+      } else {
+        setResearchError(res.error ?? '研究失败')
+      }
+    } catch {
+      setResearchError('网络错误')
+    } finally {
+      setResearching(false)
+    }
+  }
 
   async function handleToggleStatus(versionId: string, currentStatus: string) {
     const newStatus = currentStatus === 'active' ? 'archived' : 'active'
@@ -292,14 +321,24 @@ export default function LanguageDetailPage() {
               </div>
             </div>
           </div>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={handleDelete}
-            disabled={deleting}
-          >
-            {deleting ? '删除中…' : '删除'}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleResearch}
+              disabled={researching}
+            >
+              {researching ? '研究中…' : '研究资源'}
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting ? '删除中…' : '删除'}
+            </Button>
+          </div>
         </div>
 
         {/* Detail body */}
@@ -312,8 +351,132 @@ export default function LanguageDetailPage() {
               {formatDate(lang.created_at)}
             </p>
           </div>
+          {lang.researched_at && (
+            <div>
+              <p className="text-xs font-medium text-stone-500 uppercase tracking-wide">
+                最近研究
+              </p>
+              <p className="mt-1 text-sm text-stone-400">
+                {formatDate(lang.researched_at)}
+              </p>
+            </div>
+          )}
         </div>
       </Card>
+
+      {/* Research error */}
+      {researchError && (
+        <div className="mt-4 rounded-xl border border-red-700/50 bg-red-900/20 px-6 py-3">
+          <p className="text-sm text-red-400">{researchError}</p>
+        </div>
+      )}
+
+      {/* Research results panel */}
+      {researchResult && (
+        <div className="mt-6">
+          <h2 className="text-lg font-semibold mb-4">发现的资源</h2>
+          <div className="grid gap-4 lg:grid-cols-3">
+            {/* Docs */}
+            <Card>
+              <div className="px-5 py-4">
+                <h3 className="text-sm font-medium text-stone-300">
+                  文档 ({researchResult.docs.length})
+                </h3>
+                {researchResult.docs.length === 0 ? (
+                  <p className="mt-2 text-xs text-stone-500">未发现文档资源</p>
+                ) : (
+                  <ul className="mt-3 space-y-2">
+                    {researchResult.docs.map((d, i) => (
+                      <li key={i}>
+                        <a
+                          href={d.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block rounded-lg border border-stone-700/50 bg-stone-900 px-3 py-2 transition-colors hover:border-amber-500/50 hover:bg-stone-800/50"
+                        >
+                          <span className="text-xs font-medium text-stone-200">{d.description}</span>
+                          <div className="mt-1 flex items-center gap-2">
+                            <Badge variant={d.authority === 'official' ? 'success' : 'info'}>
+                              {d.authority}
+                            </Badge>
+                            <span className="text-xs text-stone-500 truncate">{d.url}</span>
+                          </div>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Card>
+
+            {/* Runtimes */}
+            <Card>
+              <div className="px-5 py-4">
+                <h3 className="text-sm font-medium text-stone-300">
+                  运行时 ({researchResult.runtimes.length})
+                </h3>
+                {researchResult.runtimes.length === 0 ? (
+                  <p className="mt-2 text-xs text-stone-500">未发现运行时资源</p>
+                ) : (
+                  <ul className="mt-3 space-y-2">
+                    {researchResult.runtimes.map((r, i) => (
+                      <li key={i}>
+                        <a
+                          href={r.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block rounded-lg border border-stone-700/50 bg-stone-900 px-3 py-2 transition-colors hover:border-amber-500/50 hover:bg-stone-800/50"
+                        >
+                          <span className="text-xs font-medium text-stone-200">{r.description}</span>
+                          <div className="mt-1 flex items-center gap-2">
+                            <Badge variant={r.authority === 'official' ? 'success' : 'info'}>
+                              {r.authority}
+                            </Badge>
+                            <span className="text-xs text-stone-500 truncate">{r.url}</span>
+                          </div>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Card>
+
+            {/* Specs */}
+            <Card>
+              <div className="px-5 py-4">
+                <h3 className="text-sm font-medium text-stone-300">
+                  规范标准 ({researchResult.specs?.length ?? 0})
+                </h3>
+                {(researchResult.specs?.length ?? 0) === 0 ? (
+                  <p className="mt-2 text-xs text-stone-500">未发现规范标准</p>
+                ) : (
+                  <ul className="mt-3 space-y-2">
+                    {researchResult.specs!.map((s, i) => (
+                      <li key={i}>
+                        <a
+                          href={s.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block rounded-lg border border-stone-700/50 bg-stone-900 px-3 py-2 transition-colors hover:border-amber-500/50 hover:bg-stone-800/50"
+                        >
+                          <span className="text-xs font-medium text-stone-200">{s.description}</span>
+                          <div className="mt-1 flex items-center gap-2">
+                            <Badge variant={s.authority === 'official' ? 'success' : 'info'}>
+                              {s.authority}
+                            </Badge>
+                            <span className="text-xs text-stone-500 truncate">{s.url}</span>
+                          </div>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
 
       {/* Versions section */}
       <div className="mt-10">

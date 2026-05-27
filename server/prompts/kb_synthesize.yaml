@@ -11,14 +11,14 @@ system_prompt: |
       {"code": "...", "explanation": "...", "output": "..."}
     ],
     "verification_code": "a simple runnable program that demonstrates what was learned",
-    "expected_output": "the exact expected stdout of the verification code"
+    "expected_output": "the EXACT stdout from the observed probe results (copy-paste, do not re-type)"
   }
 
   Rules:
   - description: explain what was LEARNED from the experiments, not what you already knew
-  - examples: use 2-3 of the best probe results, including the actual output
+  - examples: use 2-3 of the best probe results, including the actual observed output
   - verification_code: a single complete program that demonstrates this topic
-  - expected_output: the EXACT stdout (including newlines)
+  - expected_output: copy EXACTLY from the observed probe stdout (including line breaks). Do not re-type or guess
   - If results are contradictory or unclear, say so rather than guessing
   - Every claim in description must be traceable to an observation
 

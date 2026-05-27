@@ -36,8 +36,8 @@ func NewClientWithProxy(proxyURL string) *Client {
 	}
 
 	return &Client{
-		wiki:    &http.Client{Timeout: 30 * time.Second, Transport: proxyTransport},
-		direct:  &http.Client{Timeout: 30 * time.Second, Transport: directTransport},
+		wiki:    &http.Client{Timeout: 120 * time.Second, Transport: proxyTransport},
+		direct:  &http.Client{Timeout: 120 * time.Second, Transport: directTransport},
 		baseURL: "https://en.wikipedia.org/w/api.php",
 	}
 }

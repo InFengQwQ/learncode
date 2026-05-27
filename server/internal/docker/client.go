@@ -163,9 +163,9 @@ func (c *Client) RunContainer(ctx context.Context, opts ContainerOpts) (*Contain
 
 	args := []string{
 		"run",
-		"-i",                        // Keep stdin open for piping code
-		"--rm",                      // Remove container after execution
-		"--network", "none",         // No network access
+		"-i",                // Keep stdin open for piping code
+		"--rm",              // Remove container after execution
+		"--network", "none", // No network access
 		"--memory", fmt.Sprintf("%dm", opts.MemoryMB),
 		"--cpus", fmt.Sprintf("%.1f", opts.CPUs),
 		"--pids-limit", "64",

@@ -73,16 +73,16 @@ func (e *Executor) runInDocker(ctx context.Context, rc RuntimeConfig, code strin
 	}
 
 	opts := docker.ContainerOpts{
-		Image:      rc.Image,
+		Image:       rc.Image,
 		Interpreter: rc.Interpreter,
-		Code:       code,
-		Extension:  rc.Extension,
-		RunCmd:     rc.RunCmd,
-		CompileCmd: rc.CompileCmd,
-		Type:       rc.Type,
-		MemoryMB:   256,
-		CPUs:       1.0,
-		TimeoutSec: 30,
+		Code:        code,
+		Extension:   rc.Extension,
+		RunCmd:      rc.RunCmd,
+		CompileCmd:  rc.CompileCmd,
+		Type:        rc.Type,
+		MemoryMB:    256,
+		CPUs:        1.0,
+		TimeoutSec:  30,
 	}
 
 	result, err := e.Docker.RunContainer(ctx, opts)

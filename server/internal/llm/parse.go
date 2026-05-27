@@ -242,7 +242,11 @@ func extractFieldsRegex(content string, v interface{}) error {
 		}
 
 		if !found {
-			return fmt.Errorf("regex extraction failed: no fields found in LLM output")
+			preview := content
+			if len(preview) > 300 {
+				preview = preview[:300] + "..."
+			}
+			return fmt.Errorf("regex extraction failed: no fields found in LLM output (raw: %s)", preview)
 		}
 
 		// Re-marshal and unmarshal into the target
