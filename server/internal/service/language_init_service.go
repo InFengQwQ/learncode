@@ -63,6 +63,7 @@ type LanguageInitService struct {
 	PromptDir      string
 	Scraper        *scraper.Client
 	InitVersionSvc *InitService
+	KBBuildSvc     *KBBuildService
 }
 
 // ─── Internal LLM response types ──────────────────────────────
@@ -113,29 +114,49 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 	var latestVer string
 
 	// Fast path: Wikipedia infobox often has the latest version.
-	// Use it first to avoid slow web scraping when possible.
 	if info != nil && info.LatestVersion != "" {
 		v := cleanWikiVersion(info.LatestVersion)
 		if v != "" {
-			versions = []DiscoveredVersion{{
+			versions = append(versions, DiscoveredVersion{
 				Version:  v,
 				Released: info.FirstAppeared,
 				Brief:    fmt.Sprintf("Latest stable version of %s", analysis.OfficialName),
 				Source:   "wikipedia",
-			}}
+			})
 		}
 	}
 
-	// Only do slow web discovery if Wikipedia had no version.
-	// This saves ~10 min per query for languages with Wikipedia version info.
-	if len(versions) == 0 && info != nil && info.Website != "" {
-		vs, err := s.discoverVersionsFromSource(ctx, analysis.OfficialName, slug, compatModel, info.Website, nil)
+	// Collect Wikipedia external links — official websites, GitHub repos, docs.
+	// These are additional data sources for version discovery.
+	var wikiLinks []string
+	if s.Scraper != nil {
+		links, err := s.Scraper.GetExternalLinks(ctx, page.Title)
 		if err != nil {
-			slog.Warn("version discovery from web failed",
-				"language", analysis.OfficialName, "error", err)
+			slog.Warn("wikipedia external links failed", "error", err)
 		}
-		if vs != nil {
-			versions = vs
+		wikiLinks = links
+	}
+
+	// Broader version discovery from external data sources.
+	// Structured sources (Docker Hub, GitHub API) cost zero LLM and run first.
+	// HTML page scraping with LLM extraction only fires if structured sources
+	// don't produce enough results.
+	websiteURL := ""
+	if info != nil {
+		websiteURL = info.Website
+	}
+	discovered, err := s.discoverVersionsFromSource(ctx, analysis.OfficialName, slug, compatModel, websiteURL, wikiLinks)
+	if err != nil {
+		slog.Warn("version discovery from web failed",
+			"language", analysis.OfficialName, "error", err)
+	}
+	if len(discovered) > 0 {
+		// Merge with Wikipedia version, deduplicate.
+		versions = append(versions, discovered...)
+		versions = dedupVersions(versions)
+		versions = filterValidVersions(versions)
+		if compatModel == "strict" && len(versions) > 1 {
+			versions = versions[:1]
 		}
 	}
 
@@ -367,6 +388,21 @@ func (s *LanguageInitService) autoInitialize(ctx context.Context, v *model.Langu
 		return false
 	}
 	slog.Info("auto-initialize ready", "language", lang.Name, "version", v.Version, "status", result.Status)
+
+	// After runtime initialization succeeds, trigger KB build synchronously.
+	// This is part of the creation flow — the user sees kb_status progress
+	// on the version detail page.
+	if result.Verified && s.KBBuildSvc != nil {
+		kbCtx, kbCancel := context.WithTimeout(ctx, 10*time.Minute)
+		defer kbCancel()
+		slog.Info("starting KB build", "language", lang.Name, "version", v.Version)
+		if kbErr := s.KBBuildSvc.Build(kbCtx, v.ID); kbErr != nil {
+			slog.Warn("KB build failed", "language", lang.Name, "version", v.Version, "error", kbErr)
+		} else {
+			slog.Info("KB build complete", "language", lang.Name, "version", v.Version)
+		}
+	}
+
 	return true
 }
 
@@ -426,7 +462,7 @@ func uniqueStrings(in []string) []string {
 func (s *LanguageInitService) discoverVersionsFromSource(ctx context.Context, name, slug, compatModel, websiteURL string, wikiLinks []string) ([]DiscoveredVersion, error) {
 	var allVersions []DiscoveredVersion
 
-	candidates := buildCandidateSources(websiteURL, wikiLinks)
+	candidates := buildCandidateSources(websiteURL, wikiLinks, slug)
 	seen := make(map[string]bool)
 
 	// Phase A: structured sources — zero LLM cost, just HTTP + JSON
@@ -477,8 +513,14 @@ type sourceCandidate struct {
 	sourceType string
 }
 
-func buildCandidateSources(websiteURL string, wikiLinks []string) []sourceCandidate {
+func buildCandidateSources(websiteURL string, wikiLinks []string, slug string) []sourceCandidate {
 	var candidates []sourceCandidate
+
+	// Docker Hub API — external data source, zero LLM cost.
+	// Works for any language with an official Docker image; returns 404/empty for others.
+	dockerHubURL := fmt.Sprintf("https://hub.docker.com/v2/repositories/library/%s/tags?page_size=25", slug)
+	candidates = append(candidates, sourceCandidate{url: dockerHubURL, sourceType: "structured"})
+
 	for _, link := range wikiLinks {
 		if isWikipediaURL(link) || link == "" {
 			continue

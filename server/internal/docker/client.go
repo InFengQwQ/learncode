@@ -225,6 +225,27 @@ func (c *Client) BuildImage(ctx context.Context, tag string, contextDir string) 
 	return lines, nil
 }
 
+// VerifyInterpreter checks whether the given interpreter/compiler binary exists
+// inside the Docker image and returns its version string. Runs the binary with
+// --version inside a short-lived container. Returns an error if the binary is
+// not found or fails to execute.
+func (c *Client) VerifyInterpreter(ctx context.Context, image, interpreter string) (string, error) {
+	if !c.available {
+		return "", fmt.Errorf("docker daemon not available")
+	}
+
+	verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(verifyCtx, "docker", "run", "--rm",
+		"--entrypoint", interpreter, image, "--version")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("interpreter %q not found in image %s: %w\n%s", interpreter, image, err, string(output))
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 // VerifyImage runs a simple hello-world verification inside a container to
 // confirm the language runtime is working. It writes a minimal program and
 // checks that it produces output.

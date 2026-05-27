@@ -14,8 +14,8 @@ export default function LanguagesPage() {
 
   useEffect(() => {
     languages.list().then((res) => {
-      if (res.ok && res.data) {
-        setData(res.data)
+  	if (res.ok) {
+        	setData(res.data ?? [])
       } else {
         setError(res.error ?? '加载失败')
       }

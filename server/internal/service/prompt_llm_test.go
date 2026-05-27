@@ -42,7 +42,7 @@ func TestBuildCandidateSources(t *testing.T) {
 		"",
 	}
 
-	candidates := buildCandidateSources("https://www.python.org/", wikiLinks)
+	candidates := buildCandidateSources("https://www.python.org/", wikiLinks, "python")
 
 	if len(candidates) == 0 {
 		t.Fatal("expected at least one candidate source")

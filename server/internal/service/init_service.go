@@ -89,10 +89,20 @@ func (s *InitService) initWithDocker(ctx context.Context, version *model.Languag
 		rc.Interpreter = lang.Slug
 	}
 
-	slog.Info("image ready, marking as initialized", "image", image, "interpreter", rc.Interpreter)
-	result.Status = "success"
-	result.Message = fmt.Sprintf("image %s ready", image)
-	result.Verified = true
+	// Verify the interpreter binary exists inside the container.
+	versionOutput, verifyErr := s.Docker.VerifyInterpreter(ctx, image, rc.Interpreter)
+	if verifyErr != nil {
+		slog.Warn("interpreter verification failed — image may not contain the expected runtime",
+			"image", image, "interpreter", rc.Interpreter, "error", verifyErr)
+		result.Status = "unavailable"
+		result.Message = fmt.Sprintf("image %s pulled but interpreter %q not found", image, rc.Interpreter)
+		result.Verified = false
+	} else {
+		slog.Info("interpreter verified", "image", image, "interpreter", rc.Interpreter, "version", versionOutput)
+		result.Status = "success"
+		result.Message = fmt.Sprintf("image %s ready (%s)", image, versionOutput)
+		result.Verified = true
+	}
 
 	if err := s.markInitialized(ctx, version.ID, image, rc); err != nil {
 		return nil, fmt.Errorf("mark initialized: %w", err)

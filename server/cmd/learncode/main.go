@@ -89,20 +89,7 @@ func main() {
 		Docker:      dockerClient,
 	}
 
-	// init service
-	var initSvc *service.LanguageInitService
-	if llmSvc != nil {
-		initSvc = &service.LanguageInitService{
-			LangSvc:        langSvc,
-			VersionSvc:     versionSvc,
-			LLM:            llmSvc,
-			PromptDir:      "prompts",
-			Scraper:        newScraperClient(),
-			InitVersionSvc: initVersionSvc,
-		}
-	}
-
-	// kb build service
+	// kb build service — created before initSvc so it can be wired in.
 	var kbBuildSvc *service.KBBuildService
 	if llmSvc != nil {
 		explorer := &service.KBExplorer{
@@ -119,6 +106,20 @@ func main() {
 			PromptDir:     "prompts",
 			VersionSvc:    versionSvc,
 			Explorer:      explorer,
+		}
+	}
+
+	// init service
+	var initSvc *service.LanguageInitService
+	if llmSvc != nil {
+		initSvc = &service.LanguageInitService{
+			LangSvc:        langSvc,
+			VersionSvc:     versionSvc,
+			LLM:            llmSvc,
+			PromptDir:      "prompts",
+			Scraper:        newScraperClient(),
+			InitVersionSvc: initVersionSvc,
+			KBBuildSvc:     kbBuildSvc,
 		}
 	}
 

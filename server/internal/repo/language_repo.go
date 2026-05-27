@@ -17,7 +17,7 @@ type LanguageRepo struct {
 const languageCols = `id, name, slug, icon, compatibility_model, source_urls, research_data, researched_at, status, created_at`
 
 func (r *LanguageRepo) List(ctx context.Context) ([]model.Language, error) {
-	var langs []model.Language
+	langs := make([]model.Language, 0)
 	err := r.DB.SelectContext(ctx, &langs,
 		`SELECT `+languageCols+` FROM languages ORDER BY created_at`)
 	return langs, err
