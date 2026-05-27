@@ -1,6 +1,8 @@
 # Compiled binary
 server/learncode
 server/learncode.exe
+server/learncode.exe~
+learncode-*
 
 # Dependencies
 web/node_modules/
