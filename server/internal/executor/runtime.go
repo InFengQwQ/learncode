@@ -62,6 +62,17 @@ func (rc *RuntimeConfig) FindInterpreter(candidates ...string) string {
 	return rc.Interpreter
 }
 
+// ParseStoredRuntimeConfig reads a stored runtime_config and merges it with
+// sensible defaults for the given slug. If the stored config has an Image, it's
+// ready for Docker execution; otherwise, the default is returned for host fallback.
+func ParseStoredRuntimeConfig(raw json.RawMessage, slug string) RuntimeConfig {
+	rc, err := ParseRuntimeConfig(raw)
+	if err != nil || rc.Image == "" {
+		rc = DefaultRuntimeConfig(slug)
+	}
+	return rc
+}
+
 // Marshal returns the JSON encoding of the config.
 func (rc *RuntimeConfig) Marshal() []byte {
 	b, _ := json.Marshal(rc)
