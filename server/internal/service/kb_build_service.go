@@ -248,10 +248,9 @@ func (s *KBBuildService) buildEntry(ctx context.Context, ver *model.LanguageVers
 		}
 		// Same logic as Executor.Execute: Docker path only needs Image + Interpreter.
 		// Host path needs complete config (IsComplete).
-		if rc.Image == "" || s.Executor == nil {
-			if !rc.IsComplete() {
-				return nil, fmt.Errorf("runtime config incomplete for topic %q", spec.Topic)
-			}
+		if rc.Image == "" && !rc.IsComplete() {
+			slog.Warn("runtime not ready, skipping factual topic", "topic", spec.Topic, "version", ver.Version)
+			return nil, nil
 		}
 		entry, err := s.Explorer.ExploreTopic(ctx, ver, lang, rc, spec)
 		if err != nil {
