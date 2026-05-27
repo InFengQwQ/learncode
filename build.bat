@@ -1,16 +1,21 @@
 @echo off
-echo Building server image...
-docker build -t learncode-server -f server\Dockerfile server
-if %ERRORLEVEL% neq 0 goto :end
+setlocal
 
-echo Building web image...
-docker build -t learncode-web -f web\Dockerfile web
-if %ERRORLEVEL% neq 0 goto :end
+docker build -t learncode-server -f server\Dockerfile server || (
+	set "EXITCODE=%ERRORLEVEL%" & goto :end
+)
 
-echo Starting services...
-docker compose up -d
+docker build -t learncode-web -f web\Dockerfile web || (
+	set "EXITCODE=%ERRORLEVEL%" & goto :end
+)
+
+docker compose up -d || (
+	set "EXITCODE=%ERRORLEVEL%" & goto :end
+)
+
+rem all good
+set "EXITCODE=0"
 
 :end
-set EXITCODE=%ERRORLEVEL%
-timeout /t 5 /nobreak
+timeout /t 5 /nobreak >nul
 exit /b %EXITCODE%

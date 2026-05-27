@@ -119,7 +119,9 @@ func (s *KBBuildService) buildLayer(ctx context.Context, ver *model.LanguageVers
 			continue
 		}
 		if spec.Category == "factual" {
-			factualEntries = append(factualEntries, *entry)
+			if entry != nil {
+				factualEntries = append(factualEntries, *entry)
+			}
 		}
 	}
 	s.verifyFactualEntries(ctx, ver, factualEntries)
