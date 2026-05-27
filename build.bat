@@ -17,5 +17,5 @@ rem all good
 set "EXITCODE=0"
 
 :end
-timeout /t 5 /nobreak >nul
+ping 127.0.0.1 -n 6 >nul
 exit /b %EXITCODE%
