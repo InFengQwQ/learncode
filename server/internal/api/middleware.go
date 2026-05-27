@@ -67,3 +67,17 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
+
+// Flush delegates to the underlying ResponseWriter if it supports flushing.
+// Needed for streaming (SSE/NDJSON) endpoints to work through middleware.
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap returns the underlying ResponseWriter, allowing direct access
+// for cases (like ProgressWriter) that need http.Flusher directly.
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}

@@ -38,20 +38,35 @@ export default function AddLanguagePage() {
     setSteps([])
 
     try {
+      // Try streaming progress; fall back to non-streaming on failure.
+      let streamOk = false
       const stream = languages.initQueryStream(name.trim())
       for await (const line of stream) {
-        // Final result line
         if ('ok' in line && line.ok) {
           setSuggestion(line.data as InitSuggestion)
+          streamOk = true
           break
         }
-        // Progress or error step
         const step = line as unknown as ProgressStep
         setSteps(prev => [...prev, step])
         if (step.status === 'error' && step.step === 'fatal') {
-          setError(friendlyError(step.message))
+          // Streaming failed — fall back to non-streaming.
           break
         }
+      }
+      if (streamOk) return
+    } catch {
+      // Streaming threw — fall back.
+    }
+
+    // Fallback: non-streaming query.
+    try {
+      setSteps([])
+      const res = await languages.initQuery(name.trim())
+      if (res.ok && res.data) {
+        setSuggestion(res.data)
+      } else {
+        setError(friendlyError(res.error ?? '查询失败'))
       }
     } catch {
       setError('网络错误')
