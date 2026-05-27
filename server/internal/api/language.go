@@ -94,6 +94,32 @@ func (h *LanguageHandler) Init(w http.ResponseWriter, r *http.Request) {
 			RespondError(w, http.StatusBadRequest, "name is required")
 			return
 		}
+
+		// Streaming mode: each pipeline step is sent as NDJSON line.
+		if r.URL.Query().Get("stream") == "true" {
+			pw, pwErr := NewProgressWriter(w)
+			if pwErr != nil {
+				RespondError(w, http.StatusInternalServerError, "streaming not supported")
+				return
+			}
+			streamResult, streamErr := h.InitSvc.QueryWithProgress(r.Context(), input.Name,
+				func(stepName, status, msg string) {
+					pw.Emit(ProgressStep{Step: stepName, Status: status, Message: msg})
+				})
+			if streamErr != nil {
+				pw.Emit(ProgressStep{Step: "fatal", Status: "error", Message: streamErr.Error()})
+				return
+			}
+			b, _ := json.Marshal(APIResponse{OK: true, Data: streamResult})
+			w.Write(b)
+			w.Write([]byte("\n"))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			return
+		}
+
+		// Non-streaming mode.
 		result, err := h.InitSvc.Query(r.Context(), input.Name)
 		if err != nil {
 			RespondError(w, http.StatusInternalServerError, err.Error())

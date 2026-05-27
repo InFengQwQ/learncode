@@ -75,36 +75,68 @@ type analyzeResult struct {
 
 // ─── Query: Wikipedia lookup → LLM analysis → version discovery ───
 
+// ProgressFunc is an optional callback for reporting query progress.
+// step is a stable identifier (e.g. "wikipedia_search"), status is "running"/"done"/"error".
+type ProgressFunc func(step, status, message string)
+
 func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*InitSuggestion, error) {
+	return s.QueryWithProgress(ctx, languageName, nil)
+}
+
+func (s *LanguageInitService) QueryWithProgress(ctx context.Context, languageName string, progress ProgressFunc) (*InitSuggestion, error) {
+	emit := func(step, status, message string) {
+		if progress != nil {
+			progress(step, status, message)
+		}
+	}
+
+	// ── 步骤 1: Wikipedia 搜索 ──
+	emit("wikipedia_search", "running", "正在搜索 Wikipedia…")
 	hits, err := s.Scraper.SearchWikipedia(ctx, languageName+" programming language")
 	if err != nil {
-		return nil, fmt.Errorf("wikipedia search: %w", err)
+		emit("wikipedia_search", "error", err.Error())
+		return nil, fmt.Errorf("Wikipedia 搜索失败: %w", err)
 	}
 	if len(hits) == 0 {
-		return nil, fmt.Errorf("language not found: no Wikipedia article for %q", languageName)
+		emit("wikipedia_search", "error", "未找到匹配条目")
+		return nil, fmt.Errorf("未找到 Wikipedia 条目: %q", languageName)
 	}
 	page := hits[0]
+	emit("wikipedia_search", "done", "找到条目: "+page.Title)
 
-	normalizedTitle := scraper.NormalizeTitle(page.Title)
-
+	// ── 步骤 2: Wikipedia 分类验证 ──
+	emit("wikipedia_categories", "running", "正在获取分类…")
 	cats, errCat := s.Scraper.GetPageCategories(ctx, page.Title)
 	if errCat != nil {
-		return nil, fmt.Errorf("wikipedia categories: %w", errCat)
+		emit("wikipedia_categories", "error", errCat.Error())
+		return nil, fmt.Errorf("Wikipedia 分类获取失败: %w", errCat)
 	}
+	emit("wikipedia_categories", "done", fmt.Sprintf("找到 %d 个分类", len(cats)))
+
+	// ── 步骤 3: Wikipedia 信息框解析 ──
+	emit("wikipedia_infobox", "running", "正在解析信息框…")
 	info, errInfo := s.Scraper.GetInfobox(ctx, page.Title)
 	if errInfo != nil {
-		return nil, fmt.Errorf("wikipedia infobox: %w", errInfo)
+		emit("wikipedia_infobox", "error", errInfo.Error())
+		return nil, fmt.Errorf("Wikipedia 信息框解析失败: %w", errInfo)
 	}
 
 	_, reject := scraper.ScoreSignal(cats, info)
 	if reject {
-		return nil, fmt.Errorf("not a programming language: %q is classified as something else", page.Title)
+		emit("wikipedia_infobox", "error", "不是编程语言")
+		return nil, fmt.Errorf("不是编程语言: %q 被归类为非语言类型", page.Title)
 	}
+	emit("wikipedia_infobox", "done", "信息框解析完成")
 
+	// ── 步骤 4: LLM 分析 ──
+	emit("llm_analyze", "running", "LLM 正在分析语言分类与版本信息…")
+	normalizedTitle := scraper.NormalizeTitle(page.Title)
 	analysis, err := s.llmAnalyze(ctx, normalizedTitle, cats, info)
 	if err != nil {
-		return nil, fmt.Errorf("llm analysis: %w", err)
+		emit("llm_analyze", "error", err.Error())
+		return nil, fmt.Errorf("LLM 分析失败: %w", err)
 	}
+	emit("llm_analyze", "done", "分析完成: "+analysis.OfficialName)
 
 	compatModel := scraper.CompatibilityModel(analysis.OfficialName, cats, info)
 	slug := scraper.NormalizeSlug(analysis.OfficialName)
@@ -113,7 +145,7 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 	var versions []DiscoveredVersion
 	var latestVer string
 
-	// Fast path: Wikipedia infobox often has the latest version.
+	// Wikipedia infobox fast path
 	if info != nil && info.LatestVersion != "" {
 		v := cleanWikiVersion(info.LatestVersion)
 		if v != "" {
@@ -126,8 +158,8 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 		}
 	}
 
-	// Collect Wikipedia external links — official websites, GitHub repos, docs.
-	// These are additional data sources for version discovery.
+	// ── 步骤 5: Wikipedia 外部链接收集 ──
+	emit("wikipedia_links", "running", "正在收集 Wikipedia 外部链接…")
 	var wikiLinks []string
 	if s.Scraper != nil {
 		links, err := s.Scraper.GetExternalLinks(ctx, page.Title)
@@ -136,11 +168,10 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 		}
 		wikiLinks = links
 	}
+	emit("wikipedia_links", "done", fmt.Sprintf("收集到 %d 个外部链接", len(wikiLinks)))
 
-	// Broader version discovery from external data sources.
-	// Structured sources (Docker Hub, GitHub API) cost zero LLM and run first.
-	// HTML page scraping with LLM extraction only fires if structured sources
-	// don't produce enough results.
+	// ── 步骤 6: 版本发现（结构化源 → HTML LLM 提取） ──
+	emit("version_discovery", "running", "正在从 Docker Hub / GitHub / 官网 发现版本…")
 	websiteURL := ""
 	if info != nil {
 		websiteURL = info.Website
@@ -151,7 +182,6 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 			"language", analysis.OfficialName, "error", err)
 	}
 	if len(discovered) > 0 {
-		// Merge with Wikipedia version, deduplicate.
 		versions = append(versions, discovered...)
 		versions = dedupVersions(versions)
 		versions = filterValidVersions(versions)
@@ -159,6 +189,7 @@ func (s *LanguageInitService) Query(ctx context.Context, languageName string) (*
 			versions = versions[:1]
 		}
 	}
+	emit("version_discovery", "done", fmt.Sprintf("发现 %d 个版本", len(versions)))
 
 	if len(versions) == 0 && compatModel == "strict" {
 		return nil, fmt.Errorf("strict language %q: no versions could be discovered", analysis.OfficialName)

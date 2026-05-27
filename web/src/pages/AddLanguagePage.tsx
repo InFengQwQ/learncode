@@ -6,6 +6,21 @@ import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 
+interface ProgressStep {
+  step: string
+  status: string // "running" | "done" | "error"
+  message: string
+}
+
+const STEP_LABELS: Record<string, string> = {
+  wikipedia_search: '搜索 Wikipedia',
+  wikipedia_categories: '验证语言分类',
+  wikipedia_infobox: '解析信息框',
+  llm_analyze: 'LLM 分析语言',
+  wikipedia_links: '收集参考链接',
+  version_discovery: '发现历史版本',
+}
+
 export default function AddLanguagePage() {
   const navigate = useNavigate()
   const [name, setName] = useState('')
@@ -13,18 +28,30 @@ export default function AddLanguagePage() {
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
   const [suggestion, setSuggestion] = useState<InitSuggestion | null>(null)
+  const [steps, setSteps] = useState<ProgressStep[]>([])
 
   async function handleQuery() {
     if (!name.trim()) return
     setQuerying(true)
     setError('')
     setSuggestion(null)
+    setSteps([])
+
     try {
-      const res = await languages.initQuery(name.trim())
-      if (res.ok && res.data) {
-        setSuggestion(res.data)
-      } else {
-        setError(friendlyError(res.error ?? '查询失败'))
+      const stream = languages.initQueryStream(name.trim())
+      for await (const line of stream) {
+        // Final result line
+        if ('ok' in line && line.ok) {
+          setSuggestion(line.data as InitSuggestion)
+          break
+        }
+        // Progress or error step
+        const step = line as unknown as ProgressStep
+        setSteps(prev => [...prev, step])
+        if (step.status === 'error' && step.step === 'fatal') {
+          setError(friendlyError(step.message))
+          break
+        }
       }
     } catch {
       setError('网络错误')
@@ -35,6 +62,7 @@ export default function AddLanguagePage() {
 
   function handleCancel() {
     setSuggestion(null)
+    setSteps([])
   }
 
   async function handleConfirm() {
@@ -42,7 +70,6 @@ export default function AddLanguagePage() {
     setConfirming(true)
     setError('')
     try {
-      // Create with ALL discovered versions — user manages them later from detail page
       const allVersions = suggestion.versions?.map(v => v.version) ?? []
       const res = await languages.initConfirm({
         name: suggestion.name,
@@ -87,9 +114,50 @@ export default function AddLanguagePage() {
           onClick={handleQuery}
           disabled={querying || !name.trim()}
         >
-          {querying ? '搜索中…' : '查找语言'}
+          {querying ? '查询中…' : '查找语言'}
         </Button>
       </div>
+
+      {/* Progress steps */}
+      {querying && steps.length > 0 && (
+        <div className="mt-6 rounded-lg border border-stone-700 bg-stone-900 px-5 py-4">
+          <p className="mb-3 text-xs font-medium text-stone-500 uppercase tracking-wide">查询进度</p>
+          <div className="space-y-2">
+            {steps
+              .filter(s => s.step !== 'fatal')
+              .map((s, i) => {
+                const label = STEP_LABELS[s.step] ?? s.step
+                const isRunning = s.status === 'running'
+                const isDone = s.status === 'done'
+                const isError = s.status === 'error'
+                return (
+                  <div key={i} className="flex items-center gap-3 text-sm">
+                    <span className={`shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
+                      isDone
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : isError
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-amber-500/20 text-amber-400'
+                    }`}>
+                      {isDone ? '✓' : isError ? '✗' : isRunning ? '●' : '○'}
+                    </span>
+                    <span className={
+                      isRunning
+                        ? 'text-amber-300'
+                        : isError
+                          ? 'text-red-400'
+                          : 'text-stone-400'
+                    }>
+                      {label}
+                    </span>
+                    {isRunning && <span className="text-xs text-stone-500 animate-pulse">{s.message}</span>}
+                    {isError && <span className="text-xs text-red-500">{s.message}</span>}
+                  </div>
+                )
+              })}
+          </div>
+        </div>
+      )}
 
       {error && (
         <p className="mt-4 text-sm text-red-400">{error}</p>
@@ -133,7 +201,7 @@ export default function AddLanguagePage() {
               {suggestion.description}
             </p>
 
-            {/* Versions preview — all discovered versions will be created */}
+            {/* Versions preview */}
             {suggestion.versions && suggestion.versions.length > 0 && (
               <div>
                 <p className="text-xs font-medium text-stone-500 uppercase tracking-wide mb-2">

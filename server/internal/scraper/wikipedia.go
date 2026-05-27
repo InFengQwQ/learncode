@@ -26,18 +26,18 @@ func (c *Client) SearchWikipedia(ctx context.Context, query string) ([]WikiHit, 
 	}
 	resp, err := c.doWiki(req)
 	if err != nil {
-		return nil, fmt.Errorf("wikipedia search: %w", err)
+		return nil, fmt.Errorf("search request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("wikipedia search: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("search status %d", resp.StatusCode)
 	}
 
 	// Response: [query, [titles...], [snippets...], [urls...]]
 	var raw []json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("wikipedia parse: %w", err)
+		return nil, fmt.Errorf("search parse: %w", err)
 	}
 	if len(raw) < 4 {
 		return nil, nil
@@ -72,7 +72,7 @@ func (c *Client) GetPageCategories(ctx context.Context, title string) ([]string,
 	}
 	resp, err := c.doWiki(req)
 	if err != nil {
-		return nil, fmt.Errorf("wikipedia categories: %w", err)
+		return nil, fmt.Errorf("categories request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -86,7 +86,7 @@ func (c *Client) GetPageCategories(ctx context.Context, title string) ([]string,
 		} `json:"parse"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("wikipedia categories parse: %w", err)
+		return nil, fmt.Errorf("categories parse: %w", err)
 	}
 
 	cats := make([]string, len(result.Parse.Categories))
@@ -117,7 +117,7 @@ func (c *Client) GetInfobox(ctx context.Context, title string) (*InfoboxData, er
 	}
 	resp, err := c.doWiki(req)
 	if err != nil {
-		return nil, fmt.Errorf("wikipedia infobox: %w", err)
+		return nil, fmt.Errorf("infobox request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -129,7 +129,7 @@ func (c *Client) GetInfobox(ctx context.Context, title string) (*InfoboxData, er
 		} `json:"parse"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("wikipedia infobox parse: %w", err)
+		return nil, fmt.Errorf("infobox parse: %w", err)
 	}
 
 	return parseInfoboxHTML(result.Parse.Text.Star), nil
@@ -148,7 +148,7 @@ func (c *Client) GetPageImage(ctx context.Context, title string) (string, error)
 	}
 	resp, err := c.doWiki(req)
 	if err != nil {
-		return "", fmt.Errorf("wikipedia pageimage: %w", err)
+		return "", fmt.Errorf("pageimage request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -162,7 +162,7 @@ func (c *Client) GetPageImage(ctx context.Context, title string) (string, error)
 		} `json:"query"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("wikipedia pageimage parse: %w", err)
+		return "", fmt.Errorf("pageimage parse: %w", err)
 	}
 
 	for _, page := range result.Query.Pages {
@@ -186,7 +186,7 @@ func (c *Client) GetExternalLinks(ctx context.Context, title string) ([]string, 
 	}
 	resp, err := c.doWiki(req)
 	if err != nil {
-		return nil, fmt.Errorf("wikipedia externallinks: %w", err)
+		return nil, fmt.Errorf("externallinks request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -196,7 +196,7 @@ func (c *Client) GetExternalLinks(ctx context.Context, title string) ([]string, 
 		} `json:"parse"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("wikipedia externallinks parse: %w", err)
+		return nil, fmt.Errorf("externallinks parse: %w", err)
 	}
 
 	// Filter out Wikipedia-internal and non-HTTP links.

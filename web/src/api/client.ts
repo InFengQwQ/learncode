@@ -123,6 +123,40 @@ export const languages = {
       method: 'POST',
       body: JSON.stringify({ name }),
     }),
+
+  // Streams query progress as NDJSON lines. Each line is a JSON object:
+  //   {"step":"wikipedia_search","status":"running","message":"…"}
+  //   {"step":"fatal","status":"error","message":"…"}  (on failure)
+  //   {"ok":true,"data":{…}}  (final result)
+  initQueryStream: async function* (name: string): AsyncGenerator<Record<string, unknown>> {
+    const res = await fetch(`${BASE}/languages/init?step=query&stream=true`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      yield { step: 'fatal', status: 'error', message: (err as Record<string, string>).error ?? `HTTP ${res.status}` }
+      return
+    }
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try { yield JSON.parse(line) } catch { /* skip malformed lines */ }
+      }
+    }
+    if (buf.trim()) {
+      try { yield JSON.parse(buf) } catch { /* skip */ }
+    }
+  },
   initConfirm: (input: InitConfirmInput) =>
     request<InitResult>('/languages/init?step=confirm', {
       method: 'POST',
