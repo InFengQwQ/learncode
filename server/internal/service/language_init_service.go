@@ -423,7 +423,7 @@ func (s *LanguageInitService) autoInitialize(ctx context.Context, v *model.Langu
 	// After runtime initialization succeeds, trigger KB build synchronously.
 	// This is part of the creation flow — the user sees kb_status progress
 	// on the version detail page.
-	if result.Verified && s.KBBuildSvc != nil {
+	if s.KBBuildSvc != nil {
 		kbCtx, kbCancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer kbCancel()
 		slog.Info("starting KB build", "language", lang.Name, "version", v.Version)
