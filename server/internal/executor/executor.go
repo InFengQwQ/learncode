@@ -12,12 +12,10 @@ import (
 	"learncode/internal/docker"
 )
 
-// Request is a code execution request.
 type Request struct {
 	Code string `json:"code"`
 }
 
-// Result is the output of a code execution.
 type Result struct {
 	Stdout     string `json:"stdout"`
 	Stderr     string `json:"stderr"`
@@ -25,26 +23,15 @@ type Result struct {
 	DurationMs int64  `json:"duration_ms"`
 }
 
-// Executor runs code either in a Docker container or on the host.
-// If Docker is available and the runtime config specifies an image,
-// it runs in a container. Otherwise it falls back to os/exec.
 type Executor struct {
 	Docker *docker.Client
 }
 
-// NewExecutor creates an Executor with the given Docker client.
-// The Docker client may be nil or unavailable — in that case,
-// execution falls back to running on the host directly.
 func NewExecutor(dockerClient *docker.Client) *Executor {
 	return &Executor{Docker: dockerClient}
 }
 
-// Execute runs the code using the provided runtime configuration.
-// It prefers Docker container execution when available and an image
-// is specified in the config, otherwise falls back to host execution.
 func (e *Executor) Execute(ctx context.Context, rc RuntimeConfig, code string) (*Result, error) {
-	// Docker path: only needs Image + Interpreter.
-	// Missing fields (Extension, Type, RunCmd) get sensible defaults.
 	if e.Docker != nil && e.Docker.Available() && rc.Image != "" {
 		if rc.Interpreter == "" {
 			return nil, fmt.Errorf("interpreter is required for docker execution (image=%q)", rc.Image)
@@ -52,15 +39,12 @@ func (e *Executor) Execute(ctx context.Context, rc RuntimeConfig, code string) (
 		return e.runInDocker(ctx, rc, code)
 	}
 
-	// Host path: needs complete config with interpreter in PATH.
 	if !rc.IsComplete() {
 		return nil, fmt.Errorf("incomplete runtime config: type=%q interpreter=%q extension=%q run_cmd=%q — configure it in the version settings", rc.Type, rc.Interpreter, rc.Extension, rc.RunCmd)
 	}
 	return e.runOnHost(ctx, rc, code)
 }
 
-// runInDocker executes code inside a Docker container with security constraints.
-// Fields missing from rc get sensible defaults (Extension=".txt", Type="interpreted").
 func (e *Executor) runInDocker(ctx context.Context, rc RuntimeConfig, code string) (*Result, error) {
 	if rc.Extension == "" {
 		rc.Extension = ".txt"
@@ -98,7 +82,6 @@ func (e *Executor) runInDocker(ctx context.Context, rc RuntimeConfig, code strin
 	}, nil
 }
 
-// runOnHost executes code directly on the host using os/exec (legacy behavior).
 func (e *Executor) runOnHost(ctx context.Context, rc RuntimeConfig, code string) (*Result, error) {
 	dir, err := os.MkdirTemp("", "learncode-exec-*")
 	if err != nil {
@@ -159,7 +142,6 @@ func runCompiled(ctx context.Context, rc RuntimeConfig, dir, srcPath string, sta
 
 	basename := strings.TrimSuffix(filepath.Base(srcPath), rc.Extension)
 
-	// Substitute placeholders in compile command.
 	compileCmd := substitute(rc.CompileCmd, map[string]string{
 		"{file}":     srcPath,
 		"{output}":   outputPath,
@@ -195,7 +177,6 @@ func runCompiled(ctx context.Context, rc RuntimeConfig, dir, srcPath string, sta
 		}, nil
 	}
 
-	// Substitute placeholders in run command.
 	runCmd := substitute(rc.RunCmd, map[string]string{
 		"{file}":      srcPath,
 		"{output}":    outputPath,
@@ -254,8 +235,6 @@ func substitute(tmpl string, vars map[string]string) string {
 	return s
 }
 
-// altInterpreters is a hook to try alternative interpreter binary names.
-// Currently returns only the primary name — no hardcoded fallbacks.
 func altInterpreters(primary string) []string {
 	return []string{primary}
 }

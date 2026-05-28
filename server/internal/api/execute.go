@@ -12,14 +12,12 @@ import (
 	"learncode/internal/repo"
 )
 
-// ExecuteHandler handles code execution requests.
 type ExecuteHandler struct {
 	VersionRepo  *repo.VersionRepo
 	LanguageRepo *repo.LanguageRepo
 	Executor     *executor.Executor
 }
 
-// Routes registers execution routes under /api/v1.
 func (h *ExecuteHandler) Routes(r chi.Router) {
 	r.Post("/", h.Run)
 }
@@ -54,16 +52,12 @@ func (h *ExecuteHandler) Run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Activation gate: refuse code execution for inactive languages.
-	// Knowledge base must be built before the language can be used.
 	if lang.Status != "active" {
 		RespondError(w, http.StatusForbidden,
 			fmt.Sprintf("language %q is not active yet — knowledge base must be built first", lang.Name))
 		return
 	}
 
-	// Parse the version's runtime_config. If it's empty or incomplete, fall back
-	// to the default config derived from the language slug.
 	rc, err := executor.ParseRuntimeConfig(version.RuntimeConfig)
 	if err != nil || !rc.IsComplete() {
 		rc = executor.DefaultRuntimeConfig(lang.Slug)
@@ -75,7 +69,6 @@ func (h *ExecuteHandler) Run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use the Executor instance (Docker-first with os/exec fallback).
 	result, err := h.Executor.Execute(r.Context(), rc, input.Code)
 	if err != nil {
 		RespondError(w, http.StatusBadRequest, err.Error())

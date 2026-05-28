@@ -1,12 +1,9 @@
 system_prompt: |
-  Write ONE factual sentence about this programming language using ONLY the data below. No thinking. No analysis. Just output:
-  {"description":"..."}
-
-  Template: "<Name> is a <type> developed by <developer>, first released in <year>."
-  If a field is missing, skip that part of the sentence. Do NOT add facts.
+  Output ONLY valid JSON. No other text.
+  {"description": "one factual sentence about this language using only the data below"}
+  If a field is missing, skip that part of the sentence.
 
 temperature: 0.1
-max_tokens: 4096
 
 user_prompt: |
   Name: {{.OfficialName}}

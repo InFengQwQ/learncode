@@ -10,14 +10,6 @@ import (
 	"learncode/internal/model"
 )
 
-// KBExplorer orchestrates environment-interactive knowledge discovery.
-// Instead of generating entries from LLM training data, the Explorer:
-//  1. Asks the LLM to generate exploratory code snippets (probes)
-//  2. Executes all probes in the language's runtime environment
-//  3. Asks the LLM to synthesize observations into a knowledge entry
-//
-// This keeps each LLM call within token limits while enabling the LLM
-// to learn from actual observed behavior.
 type KBExplorer struct {
 	LLM       *llm.Service
 	Executor  *executor.Executor
@@ -38,8 +30,6 @@ type probeResult struct {
 	Error      string `json:"error,omitempty"`
 }
 
-// ExploreTopic discovers knowledge about a specific topic by generating probes,
-// executing them in the runtime environment, and synthesizing the results.
 func (e *KBExplorer) ExploreTopic(
 	ctx context.Context,
 	ver *model.LanguageVersion,
@@ -47,7 +37,6 @@ func (e *KBExplorer) ExploreTopic(
 	rc executor.RuntimeConfig,
 	spec TopicSpec,
 ) (*model.KnowledgeEntry, error) {
-	// Step 1: Generate exploratory code snippets
 	probes, err := e.generateProbes(ctx, lang, ver, spec)
 	if err != nil {
 		return nil, fmt.Errorf("generate probes for %q: %w", spec.Topic, err)
@@ -56,10 +45,8 @@ func (e *KBExplorer) ExploreTopic(
 		return nil, fmt.Errorf("no probes generated for %q", spec.Topic)
 	}
 
-	// Step 2: Execute all probes
 	results := e.executeProbes(ctx, rc, probes)
 
-	// Step 3: Synthesize into knowledge entry
 	entry, err := e.synthesize(ctx, lang, ver, spec, results)
 	if err != nil {
 		return nil, fmt.Errorf("synthesize entry for %q: %w", spec.Topic, err)
@@ -68,7 +55,6 @@ func (e *KBExplorer) ExploreTopic(
 	return entry, nil
 }
 
-// generateProbes asks the LLM to create exploratory code snippets for a topic.
 func (e *KBExplorer) generateProbes(
 	ctx context.Context,
 	lang *model.Language,
@@ -100,7 +86,6 @@ func (e *KBExplorer) generateProbes(
 	return probes, nil
 }
 
-// executeProbes runs all probe code snippets and collects results.
 func (e *KBExplorer) executeProbes(ctx context.Context, rc executor.RuntimeConfig, probes []probeSpec) []probeResult {
 	results := make([]probeResult, 0, len(probes))
 	for _, p := range probes {
@@ -118,7 +103,6 @@ func (e *KBExplorer) executeProbes(ctx context.Context, rc executor.RuntimeConfi
 	return results
 }
 
-// synthesize asks the LLM to build a knowledge entry from probe execution results.
 func (e *KBExplorer) synthesize(
 	ctx context.Context,
 	lang *model.Language,
@@ -152,7 +136,6 @@ func (e *KBExplorer) synthesize(
 		return nil, fmt.Errorf("parse synthesize response: %w", err)
 	}
 
-	// Determine version_id: core and idiom are shared (nil), version is per-version
 	var versionID *string
 	if spec.Scope == "version" {
 		versionID = &ver.ID

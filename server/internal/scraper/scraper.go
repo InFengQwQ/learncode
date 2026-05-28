@@ -1,6 +1,7 @@
 package scraper
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -10,19 +11,15 @@ import (
 const userAgent = "LearnCode/1.0"
 
 type Client struct {
-	wiki    *http.Client // uses proxy (Accesser) for Wikipedia API
-	direct  *http.Client // direct connection for general web
+	wiki    *http.Client
+	direct  *http.Client
 	baseURL string
 }
 
-// NewClient creates a scraper with Wikipedia proxy at localhost:7654 (Accesser).
 func NewClient() *Client {
 	return NewClientWithProxy("http://localhost:7654")
 }
 
-// NewClientWithProxy creates a scraper with two HTTP transports:
-//   - wikiClient: routes through proxyURL to bypass DNS blocking for Wikipedia
-//   - directClient: direct connection (no proxy) for general websites
 func NewClientWithProxy(proxyURL string) *Client {
 	proxyTransport := &http.Transport{
 		DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
@@ -42,13 +39,11 @@ func NewClientWithProxy(proxyURL string) *Client {
 	}
 }
 
-// doWiki performs a Wikipedia API request and checks for errors.
-// Uses the wiki client (proxy transport) to bypass DNS blocking.
 func (c *Client) doWiki(req *http.Request) (*http.Response, error) {
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := c.wiki.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("wikipedia proxy unavailable (is Accesser running?): %w", err)
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		resp.Body.Close()
@@ -57,7 +52,6 @@ func (c *Client) doWiki(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// WikipediaError is returned when the Wikipedia API returns an error.
 type WikipediaError struct {
 	Message string
 }

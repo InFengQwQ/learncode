@@ -8,17 +8,12 @@ import (
 	"learncode/internal/llm"
 )
 
-// loadLLMService creates an LLM service from config.yaml for integration testing.
-// Overrides the endpoint to use localhost since tests run on the host machine,
-// not inside the Docker container where host.docker.internal is needed.
 func loadLLMService(t *testing.T) *llm.Service {
 	t.Helper()
 	cfg, err := config.Load("../../config.yaml")
 	if err != nil {
 		t.Skipf("cannot load config: %v", err)
 	}
-	// Override endpoint: the config uses host.docker.internal for container-to-host,
-	// but tests run directly on the host so we need localhost.
 	for i := range cfg.LLM.Providers {
 		cfg.LLM.Providers[i].Endpoint = "http://localhost:1234/v1"
 	}
@@ -29,85 +24,53 @@ func loadLLMService(t *testing.T) *llm.Service {
 	return svc
 }
 
-// TestBuildCandidateSources validates the tool-based source discovery
-// replaces the old LLM nav_sources approach. It uses heuristics to find
-// version-related URLs from Wikipedia links and official website.
-func TestBuildCandidateSources(t *testing.T) {
-	wikiLinks := []string{
-		"https://pypi.org/",
-		"https://github.com/python/cpython",
-		"https://www.python.org/downloads/",
-		"https://docs.python.org/3/",
-		"https://en.wikipedia.org/wiki/Python",
-		"",
+func TestFilterVersionSourcesPrompt(t *testing.T) {
+	svc := loadLLMService(t)
+	ctx := context.Background()
+
+	vars := map[string]string{
+		"LanguageName": "Go",
+		"WebsiteURL":   "https://go.dev",
+		"URLs":         "https://go.dev/dl/\nhttps://github.com/golang/go\nhttps://go.dev/doc/\nhttps://go.dev/blog\nhttps://en.wikipedia.org/wiki/Go_(programming_language)",
 	}
 
-	candidates := buildCandidateSources("https://www.python.org/", wikiLinks, "python")
-
-	if len(candidates) == 0 {
-		t.Fatal("expected at least one candidate source")
+	tmpl, err := llm.LoadTemplate("../../prompts/filter_version_sources.yaml", vars)
+	if err != nil {
+		t.Fatalf("load filter_version_sources template: %v", err)
 	}
 
-	// First candidate should be the GitHub API URL (structured, highest priority)
-	firstStructured := false
-	for i, c := range candidates {
-		t.Logf("candidate[%d]: url=%s type=%s", i, c.url, c.sourceType)
-		if c.sourceType == "structured" && i == 0 {
-			firstStructured = true
-		}
-		if c.url == "" {
-			t.Errorf("candidate[%d]: empty url", i)
-		}
+	content, usage, err := svc.ChatWithTemp(ctx, tmpl.SystemPrompt, tmpl.UserPrompt, tmpl.Temperature, tmpl.MaxTokens)
+	if err != nil {
+		t.Fatalf("llm call failed: %v", err)
 	}
-	if !firstStructured {
-		t.Error("expected first candidate to be structured type")
+	t.Logf("filter_version_sources token usage: prompt=%d completion=%d total=%d",
+		usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
+	t.Logf("filter_version_sources raw response:\n%s", content)
+
+	var urls []string
+	if err := llm.ParseLLMJSON(content, &urls); err != nil {
+		t.Fatalf("parse filter_version_sources response: %v", err)
 	}
 
-	// Verify GitHub API URL was derived
-	foundGitHubAPI := false
-	for _, c := range candidates {
-		if c.url == "https://api.github.com/repos/python/cpython/releases" {
-			foundGitHubAPI = true
-			break
-		}
+	if len(urls) == 0 {
+		t.Error("expected at least one URL, got none")
 	}
-	if !foundGitHubAPI {
-		t.Error("expected GitHub API URL to be derived from github.com/python/cpython")
-	}
-
-	// Verify common paths were derived
-	foundDownloads := false
-	for _, c := range candidates {
-		if c.url == "https://www.python.org/downloads" {
-			foundDownloads = true
-			break
-		}
-	}
-	if !foundDownloads {
-		t.Error("expected /downloads path to be derived")
-	}
-
-	// Verify Wikipedia URLs are excluded
-	for _, c := range candidates {
-		if isWikipediaURL(c.url) {
-			t.Errorf("Wikipedia URL should be excluded: %s", c.url)
-		}
+	t.Logf("filtered %d URLs", len(urls))
+	for i, u := range urls {
+		t.Logf("url[%d]: %s", i, u)
 	}
 }
 
-// TestExtractVersionsPrompt validates that the extract_versions.yaml prompt
-// produces well-formed JSON with version data from realistic HTML page text.
 func TestExtractVersionsPrompt(t *testing.T) {
 	svc := loadLLMService(t)
 	ctx := context.Background()
 
-	// Realistic text from a downloads/releases page
 	pageText := `Download Python. Python 3.13.0. Release Date: Oct. 7, 2024. This is the latest stable release.
-	Download Windows installer (64-bit) https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe
-	Python 3.12.7. Release Date: Oct. 1, 2024. Download Windows installer
-	Python 3.11.10. Release Date: Oct. 1, 2024. Download Windows installer
-	Python 3.10.15. Release Date: Oct. 1, 2024. Download Windows installer
-	Docker: docker pull python:3.13, docker pull python:3.13-slim, python:3.12, python:3.12-slim`
+		Download Windows installer (64-bit) https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe
+		Python 3.12.7. Release Date: Oct. 1, 2024. Download Windows installer
+		Python 3.11.10. Release Date: Oct. 1, 2024. Download Windows installer
+		Python 3.10.15. Release Date: Oct. 1, 2024. Download Windows installer
+		Docker: docker pull python:3.13, docker pull python:3.13-slim, python:3.12, python:3.12-slim`
 
 	vars := map[string]string{
 		"LanguageName":       "Python",
@@ -130,7 +93,6 @@ func TestExtractVersionsPrompt(t *testing.T) {
 		usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens)
 	t.Logf("extract_versions raw response:\n%s", content)
 
-	// Parse and validate JSON schema
 	var result struct {
 		Versions   []DiscoveredVersion `json:"versions"`
 		Latest     string              `json:"latest"`
@@ -157,7 +119,6 @@ func TestExtractVersionsPrompt(t *testing.T) {
 		}
 	}
 
-	// Validate versions match what was in the page
 	found3_13 := false
 	found3_12 := false
 	for _, v := range result.Versions {
@@ -178,7 +139,6 @@ func TestExtractVersionsPrompt(t *testing.T) {
 		t.Error("expected version 3.12.7 to be extracted from page text")
 	}
 
-	// Check docker_refs were captured
 	if len(result.DockerRefs) == 0 {
 		t.Log("no docker_refs extracted — may be acceptable if LLM missed them")
 	}
@@ -187,14 +147,13 @@ func TestExtractVersionsPrompt(t *testing.T) {
 	}
 }
 
-// TestExtractVersionsStrict validates strict mode: only one version returned.
 func TestExtractVersionsStrict(t *testing.T) {
 	svc := loadLLMService(t)
 	ctx := context.Background()
 
 	pageText := `The Go Programming Language. Latest stable release: Go 1.24.0.
-	Download: https://go.dev/dl/go1.24.0.windows-amd64.msi
-	Docker: docker pull golang:1.24`
+		Download: https://go.dev/dl/go1.24.0.windows-amd64.msi
+		Docker: docker pull golang:1.24`
 
 	vars := map[string]string{
 		"LanguageName":       "Go",
@@ -237,8 +196,6 @@ func TestExtractVersionsStrict(t *testing.T) {
 	}
 }
 
-// TestFullVersionDiscoveryWorkflow runs the complete discoverVersionsFromSource
-// against a fresh LanguageInitService. This is the end-to-end prompt validation.
 func TestFullVersionDiscoveryWorkflow(t *testing.T) {
 	svc := loadLLMService(t)
 	ctx := context.Background()
@@ -246,12 +203,9 @@ func TestFullVersionDiscoveryWorkflow(t *testing.T) {
 	svc2 := &LanguageInitService{
 		LLM:       svc,
 		PromptDir: "../../prompts",
-		Scraper:   nil, // we'll inject test data instead
+		Scraper:   nil,
 	}
 
-	// Simulate the scraper by pre-computing FetchPageText results.
-	// We inject a mock scraper via the struct — since we can't easily mock,
-	// we skip if scraper is nil (the real function would fail without it).
 	_ = ctx
 	_ = svc2
 	t.Skip("end-to-end test requires mock scraper — tested via unit prompt tests above")

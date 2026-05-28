@@ -18,7 +18,6 @@ system_prompt: |
 user_prompt: |
   Analyze: {{.Topic}}
 temperature: 0.5
-max_tokens: 2048
 `
 	if _, err := tmp.WriteString(content); err != nil {
 		t.Fatal(err)
@@ -42,8 +41,8 @@ max_tokens: 2048
 	if tmpl.Temperature != 0.5 {
 		t.Errorf("expected temperature 0.5, got %f", tmpl.Temperature)
 	}
-	if tmpl.MaxTokens != 2048 {
-		t.Errorf("expected max_tokens 2048, got %d", tmpl.MaxTokens)
+	if tmpl.MaxTokens != 4096 {
+		t.Errorf("expected default max_tokens 4096, got %d", tmpl.MaxTokens)
 	}
 }
 

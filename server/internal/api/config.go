@@ -48,7 +48,7 @@ func (h *ConfigHandler) PutLLM(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	prevLLM := h.Cfg.LLM // rollback snapshot
+	prevLLM := h.Cfg.LLM
 
 	h.Cfg.LLM.Default = input.Default
 	h.Cfg.LLM.Providers = providers
@@ -59,7 +59,6 @@ func (h *ConfigHandler) PutLLM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hot-reload the LLM service so new settings take effect immediately
 	if h.LLMSvc != nil {
 		if err := h.LLMSvc.Reload(h.Cfg.LLM); err != nil {
 			slog.Warn("llm reload failed after config save", "error", err)
@@ -73,21 +72,15 @@ func (h *ConfigHandler) PutLLM(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusOK, h.Cfg.LLM.ToResponse())
 }
 
-// resolveKey returns the real API key for a provider update.
-// If the user provided a plain key (not masked), use it directly.
-// If masked, try to match by name first, then by masked fingerprint
-// (handles renames). Falls back to empty string for unmatched masked keys.
 func resolveKey(input config.LLMProviderResponse, existing []config.LLMProviderConfig) string {
 	if !isMasked(input.APIKey) {
 		return input.APIKey
 	}
-	// Try exact name match first.
 	for i := range existing {
 		if existing[i].Name == input.Name {
 			return existing[i].APIKey
 		}
 	}
-	// Provider was renamed — search by masked fingerprint.
 	masked := input.APIKey
 	for i := range existing {
 		if config.MaskKey(existing[i].APIKey) == masked {

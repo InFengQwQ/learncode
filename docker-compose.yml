@@ -17,6 +17,16 @@ services:
       timeout: 3s
       retries: 10
 
+  accesser:
+    build: ./server/accesser
+    image: learncode-accesser:latest
+    container_name: learncode-accesser
+    ports:
+      - "7654:7654"
+    volumes:
+      - ./server/accesser:/accesser
+    restart: unless-stopped
+
   server:
     build: ./server
     image: learncode-server:latest
@@ -30,15 +40,15 @@ services:
       DATABASE_PASSWORD: learncode
       DATABASE_NAME: learncode
       STORAGE_ROOT: /tmp/learncode-storage
-      WIKI_PROXY: http://host.docker.internal:7654
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      WIKI_PROXY: http://accesser:7654
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./server/config.yaml:/app/config.yaml
     depends_on:
       postgres:
         condition: service_healthy
+      accesser:
+        condition: service_started
     restart: unless-stopped
 
   web:

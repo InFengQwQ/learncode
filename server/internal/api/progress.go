@@ -6,22 +6,17 @@ import (
 	"net/http"
 )
 
-// ProgressStep represents one step in a multi-stage query pipeline.
 type ProgressStep struct {
 	Step    string `json:"step"`
-	Status  string `json:"status"` // "running" | "done" | "error"
+	Status  string `json:"status"`
 	Message string `json:"message"`
 }
 
-// ProgressWriter streams progress events to the HTTP response via
-// newline-delimited JSON (NDJSON). Each line is a self-contained JSON object
-// that the frontend can parse and render incrementally.
 type ProgressWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
 }
 
-// NewProgressWriter prepares the HTTP response for streaming.
 func NewProgressWriter(w http.ResponseWriter) (*ProgressWriter, error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -35,7 +30,6 @@ func NewProgressWriter(w http.ResponseWriter) (*ProgressWriter, error) {
 	return &ProgressWriter{w: w, flusher: flusher}, nil
 }
 
-// Emit writes a progress step and flushes it to the client.
 func (p *ProgressWriter) Emit(step ProgressStep) {
 	b, _ := json.Marshal(step)
 	p.w.Write(b)
@@ -43,17 +37,14 @@ func (p *ProgressWriter) Emit(step ProgressStep) {
 	p.flusher.Flush()
 }
 
-// EmitRunning sends a "running" event for a step.
 func (p *ProgressWriter) EmitRunning(step, message string) {
 	p.Emit(ProgressStep{Step: step, Status: "running", Message: message})
 }
 
-// EmitDone sends a "done" event for a step.
 func (p *ProgressWriter) EmitDone(step, message string) {
 	p.Emit(ProgressStep{Step: step, Status: "done", Message: message})
 }
 
-// EmitError sends an "error" event for a step.
 func (p *ProgressWriter) EmitError(step, message string) {
 	p.Emit(ProgressStep{Step: step, Status: "error", Message: message})
 }

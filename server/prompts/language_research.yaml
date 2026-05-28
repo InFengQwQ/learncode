@@ -23,6 +23,7 @@ system_prompt: |
   - If the provided data contains formal standards (e.g. ISO, ECMA, or W3C standards), you MUST include them in specs.
   - If you cannot find anything for a category, return an empty array [] — never fabricate URLs.
   - Do NOT include generic programming tutorial sites, paid course platforms, or blog posts.
+  - Prefer links that may contain version lists or download sources for the language.
   - Output ONLY the JSON object. Not even a single character before "{" or after "}".
   - Do NOT wrap in ``` fences.
 
@@ -36,4 +37,3 @@ user_prompt: |
   {{if .ExternalLinks}}External links from Wikipedia:
   {{.ExternalLinks}}{{end}}
 temperature: 0.1
-max_tokens: 4096

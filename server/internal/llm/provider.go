@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -30,9 +30,9 @@ func NewProvider(name, endpoint, apiKey string, models []string) Provider {
 		apiKey:   apiKey,
 		model:    model,
 		client: &http.Client{
-			Timeout: 0, // no overall timeout — model generation can take minutes
+			Timeout: 0,
 			Transport: &http.Transport{
-				DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+				DialContext: (&net.Dialer{Timeout: 20 * time.Second}).DialContext,
 			},
 		},
 	}
@@ -44,6 +44,7 @@ func (p *openAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	if req.Model == "" {
 		req.Model = p.model
 	}
+	slog.Info("llm call start", "provider", p.name, "model", req.Model)
 
 	type openAIRequest struct {
 		Model       string        `json:"model"`
@@ -74,6 +75,7 @@ func (p *openAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
+		slog.Warn("llm call failed", "provider", p.name, "model", req.Model, "error", err)
 		return nil, fmt.Errorf("http request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -81,6 +83,7 @@ func (p *openAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	if resp.StatusCode != http.StatusOK {
 		var errBody bytes.Buffer
 		errBody.ReadFrom(resp.Body)
+		slog.Warn("llm call api error", "provider", p.name, "model", req.Model, "status", resp.StatusCode)
 		return nil, fmt.Errorf("llm api error %d: %s", resp.StatusCode, errBody.String())
 	}
 
@@ -110,21 +113,11 @@ func (p *openAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 	}
 
 	content := parsed.Choices[0].Message.Content
-	// Reasoning models (e.g., qwen3.5) may produce reasoning_content
-	// but leave content empty when max_tokens is too low.
-	// Try to extract the final answer from the end of reasoning_content.
 	if content == "" && parsed.Choices[0].Message.ReasoningContent != "" {
 		reasoning := parsed.Choices[0].Message.ReasoningContent
-		// Qwen models put their final answer at the end of the thinking process.
-		// Look for JSON object at the end of reasoning text.
-		if lastBrace := strings.LastIndex(reasoning, "{"); lastBrace >= 0 {
-			tail := reasoning[lastBrace:]
-			if ExtractJSONBlock(tail) != "" {
-				content = ExtractJSONBlock(tail)
-			}
-		}
-		// If no JSON found at end, use entire reasoning content (existing behavior).
-		if content == "" {
+		if json := extractJSONFromText(reasoning); json != "" {
+			content = json
+		} else {
 			content = reasoning
 		}
 	}
@@ -140,4 +133,28 @@ func (p *openAIProvider) Chat(ctx context.Context, req ChatRequest) (*ChatRespon
 			TotalTokens:      parsed.Usage.TotalTokens,
 		},
 	}, nil
+}
+
+func extractJSONFromText(text string) string {
+	for i := len(text) - 1; i >= 0; i-- {
+		if text[i] == '}' {
+			depth := 0
+			for j := i; j >= 0; j-- {
+				if text[j] == '}' {
+					depth++
+				} else if text[j] == '{' {
+					depth--
+					if depth == 0 {
+						candidate := text[j : i+1]
+						var v interface{}
+						if json.Unmarshal([]byte(candidate), &v) == nil {
+							return candidate
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+	return ""
 }

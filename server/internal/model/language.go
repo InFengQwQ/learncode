@@ -9,6 +9,7 @@ type Language struct {
 	ID                 string           `db:"id"                  json:"id"`
 	Name               string           `db:"name"                json:"name"`
 	Slug               string           `db:"slug"                json:"slug"`
+	WikiTitle          string           `db:"wiki_title"          json:"wiki_title"`
 	Icon               string           `db:"icon"                json:"icon"`
 	CompatibilityModel string           `db:"compatibility_model" json:"compatibility_model"`
 	SourceURLs         json.RawMessage  `db:"source_urls"         json:"source_urls"`

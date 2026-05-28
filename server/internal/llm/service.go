@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"learncode/internal/config"
@@ -27,7 +28,6 @@ func NewService(cfg config.LLMConfig) (*Service, error) {
 		return nil, fmt.Errorf("no llm providers configured")
 	}
 	if _, ok := providers[cfg.Default]; !ok {
-		// use first available as default
 		for k := range providers {
 			cfg.Default = k
 			break
@@ -43,8 +43,6 @@ func (s *Service) Chat(ctx context.Context, systemPrompt, userPrompt string) (st
 	return s.ChatWithTemp(ctx, systemPrompt, userPrompt, 0.3, 4096)
 }
 
-// ChatWithTemp sends a chat request with explicit temperature and max_tokens.
-// Used when callers need to vary temperature (e.g., retry loops).
 func (s *Service) ChatWithTemp(ctx context.Context, systemPrompt, userPrompt string, temperature float64, maxTokens int) (string, *TokenUsage, error) {
 	messages := []ChatMessage{
 		{Role: "system", Content: systemPrompt},
@@ -61,22 +59,41 @@ func (s *Service) ChatWithTemp(ctx context.Context, systemPrompt, userPrompt str
 		return "", nil, fmt.Errorf("default provider %q not found", s.default_)
 	}
 
+	slog.Info("ChatWithTemp: calling default provider",
+		"provider", s.default_, "model", p.Name(), "temperature", temperature, "max_tokens", maxTokens)
+
 	resp, err := p.Chat(ctx, req)
 	if err != nil {
-		// try other providers
+		slog.Warn("ChatWithTemp: default provider failed, starting fallback",
+			"provider", s.default_, "error", err)
+
+		fallbackCtx := ctx
+		if ctx.Err() != nil {
+			fallbackCtx = context.Background()
+		}
 		for name, alt := range s.providers {
 			if name == s.default_ {
 				continue
 			}
-			resp, err = alt.Chat(ctx, req)
+			slog.Info("ChatWithTemp: trying fallback provider", "provider", name, "model", alt.Name())
+			resp, err = alt.Chat(fallbackCtx, req)
 			if err == nil {
+				slog.Info("ChatWithTemp: fallback provider succeeded", "provider", name)
 				break
 			}
+			slog.Warn("ChatWithTemp: fallback provider also failed", "provider", name, "error", err)
 		}
 		if err != nil {
+			slog.Error("ChatWithTemp: all providers failed", "error", err)
 			return "", nil, fmt.Errorf("all providers failed: %w", err)
 		}
 	}
+
+	slog.Info("ChatWithTemp: success",
+		"provider", s.default_,
+		"prompt_tokens", resp.Usage.PromptTokens,
+		"completion_tokens", resp.Usage.CompletionTokens,
+		"content_length", len(resp.Content))
 
 	s.mu.Lock()
 	s.total.PromptTokens += resp.Usage.PromptTokens
@@ -91,7 +108,6 @@ func (s *Service) ChatWithTemp(ctx context.Context, systemPrompt, userPrompt str
 	}, nil
 }
 
-// Reload recreates providers from new config without restarting the server.
 func (s *Service) Reload(cfg config.LLMConfig) error {
 	providers := make(map[string]Provider)
 	for _, p := range cfg.Providers {

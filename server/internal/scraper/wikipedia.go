@@ -15,7 +15,6 @@ type WikiHit struct {
 	URL     string
 }
 
-// SearchWikipedia queries Wikipedia's opensearch API.
 func (c *Client) SearchWikipedia(ctx context.Context, query string) ([]WikiHit, error) {
 	u := fmt.Sprintf("%s?action=opensearch&search=%s&limit=5&format=json",
 		c.baseURL, url.QueryEscape(query))
@@ -34,7 +33,6 @@ func (c *Client) SearchWikipedia(ctx context.Context, query string) ([]WikiHit, 
 		return nil, fmt.Errorf("search status %d", resp.StatusCode)
 	}
 
-	// Response: [query, [titles...], [snippets...], [urls...]]
 	var raw []json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("search parse: %w", err)
@@ -61,7 +59,6 @@ func (c *Client) SearchWikipedia(ctx context.Context, query string) ([]WikiHit, 
 	return hits, nil
 }
 
-// GetPageCategories returns the Wikipedia categories for a page.
 func (c *Client) GetPageCategories(ctx context.Context, title string) ([]string, error) {
 	u := fmt.Sprintf("%s?action=parse&page=%s&prop=categories&format=json",
 		c.baseURL, url.QueryEscape(title))
@@ -96,7 +93,6 @@ func (c *Client) GetPageCategories(ctx context.Context, title string) ([]string,
 	return cats, nil
 }
 
-// InfoboxData holds structured data extracted from a Wikipedia infobox.
 type InfoboxData struct {
 	InfoboxType   string
 	Website       string
@@ -106,7 +102,6 @@ type InfoboxData struct {
 	FirstAppeared string
 }
 
-// GetInfobox extracts infobox data from a Wikipedia page's intro section.
 func (c *Client) GetInfobox(ctx context.Context, title string) (*InfoboxData, error) {
 	u := fmt.Sprintf("%s?action=parse&page=%s&prop=text&section=0&format=json",
 		c.baseURL, url.QueryEscape(title))
@@ -135,9 +130,6 @@ func (c *Client) GetInfobox(ctx context.Context, title string) (*InfoboxData, er
 	return parseInfoboxHTML(result.Parse.Text.Star), nil
 }
 
-// GetPageImage returns the URL of the main image/logo for a Wikipedia page.
-// Uses the pageimages API which returns the article's representative image as a
-// thumbnail. Returns empty string if the article has no image.
 func (c *Client) GetPageImage(ctx context.Context, title string) (string, error) {
 	u := fmt.Sprintf("%s?action=query&titles=%s&prop=pageimages&format=json&pithumbsize=120&redirects=true",
 		c.baseURL, url.QueryEscape(title))
@@ -173,9 +165,6 @@ func (c *Client) GetPageImage(ctx context.Context, title string) (string, error)
 	return "", nil
 }
 
-// GetExternalLinks returns the external links from a Wikipedia page.
-// These are links in the "External links" section that point to official
-// documentation, standards, and other authoritative resources.
 func (c *Client) GetExternalLinks(ctx context.Context, title string) ([]string, error) {
 	u := fmt.Sprintf("%s?action=parse&page=%s&prop=externallinks&format=json",
 		c.baseURL, url.QueryEscape(title))
@@ -199,7 +188,6 @@ func (c *Client) GetExternalLinks(ctx context.Context, title string) ([]string, 
 		return nil, fmt.Errorf("externallinks parse: %w", err)
 	}
 
-	// Filter out Wikipedia-internal and non-HTTP links.
 	var links []string
 	for _, link := range result.Parse.Externallinks {
 		if strings.HasPrefix(link, "http://") || strings.HasPrefix(link, "https://") {
@@ -209,8 +197,6 @@ func (c *Client) GetExternalLinks(ctx context.Context, title string) ([]string, 
 	return links, nil
 }
 
-// ScoreSignal returns a signal score based on Wikipedia categories and infobox.
-// positive = language signal; negative (reject=true) = explicitly not a language.
 func ScoreSignal(cats []string, info *InfoboxData) (score int, reject bool) {
 	for _, c := range cats {
 		lower := strings.ToLower(c)
@@ -229,10 +215,7 @@ func ScoreSignal(cats []string, info *InfoboxData) (score int, reject bool) {
 	return score, false
 }
 
-// ─── HTML infobox parsing ───────────────────────────────────────
-
 func parseInfoboxHTML(html string) *InfoboxData {
-	// Find the infobox table bounds
 	start := findInfoboxStart(html)
 	if start < 0 {
 		return nil
@@ -246,14 +229,12 @@ func parseInfoboxHTML(html string) *InfoboxData {
 	info := &InfoboxData{}
 	info.InfoboxType = extractInfoboxType(tableHTML)
 
-	// Extract key-value rows from infobox table
 	rows := extractRows(tableHTML)
 	for _, row := range rows {
 		key := normalizeKey(row.key)
 		val := row.val
 		switch {
 		case key == "website" || key == "homepage":
-			// Use raw HTML to extract href because stripTags removes <a> attributes
 			if u := extractHrefFromRaw(row.rawVal); u != "" {
 				info.Website = u
 			}
@@ -271,7 +252,6 @@ func parseInfoboxHTML(html string) *InfoboxData {
 }
 
 func findInfoboxStart(html string) int {
-	// Wikipedia infobox tables have class="infobox"
 	idx := strings.Index(html, `class="infobox"`)
 	if idx < 0 {
 		idx = strings.Index(html, `class="infobox`)
@@ -279,7 +259,6 @@ func findInfoboxStart(html string) int {
 	if idx < 0 {
 		return -1
 	}
-	// backtrack to <table
 	back := strings.LastIndex(html[:idx], "<table")
 	return back
 }
@@ -301,7 +280,6 @@ func findTableEnd(html string, start int) int {
 }
 
 func extractInfoboxType(html string) string {
-	// Look for infobox title: <th class="infobox-title"> or <caption>
 	if idx := strings.Index(html, "infobox-title"); idx >= 0 {
 		start := strings.Index(html[idx:], ">") + idx + 1
 		end := strings.Index(html[start:], "<") + start
@@ -321,8 +299,8 @@ func extractInfoboxType(html string) string {
 
 type rowKV struct {
 	key    string
-	val    string // stripped text
-	rawVal string // raw inner HTML of <td> — used for href extraction
+	val    string
+	rawVal string
 }
 
 func extractRows(html string) []rowKV {
@@ -370,18 +348,13 @@ func extractCellWithRaw(html, tag string) (stripped string, raw string) {
 	return strings.TrimSpace(stripTags(raw)), raw
 }
 
-// extractHrefFromRaw extracts the first href value from raw HTML.
-// Works on un-stripped HTML so <a> attributes are preserved.
 func extractHrefFromRaw(html string) string {
-	// First remove style/script blocks so their text content doesn't pollute extraction
 	html = removeStyleAndScript(html)
 
-	// Find <a> tag with href
 	idx := strings.Index(strings.ToLower(html), "<a ")
 	if idx < 0 {
 		return ""
 	}
-	// Find href= within this <a> tag
 	endTag := strings.Index(html[idx:], ">")
 	if endTag < 0 {
 		return ""
@@ -393,19 +366,16 @@ func extractHrefFromRaw(html string) string {
 		return ""
 	}
 
-	// Skip past "href="
 	rest := anchorHTML[hrefIdx+5:]
 	quote := rest[0]
 	if quote != '"' && quote != '\'' {
-		// Unquoted href — take until space or >
 		end := strings.IndexAny(rest, " >")
 		if end < 0 {
 			return strings.TrimSpace(rest)
 		}
 		return strings.TrimSpace(rest[:end])
 	}
-	// Quoted href
-	rest = rest[1:] // skip opening quote
+	rest = rest[1:]
 	end := strings.IndexByte(rest, quote)
 	if end < 0 {
 		return ""
@@ -413,12 +383,8 @@ func extractHrefFromRaw(html string) string {
 	return rest[:end]
 }
 
-// NormalizeTitle strips Wikipedia disambiguation suffixes like
-// "Python (programming language)" → "Python".
-// Also handles other common disambiguation patterns.
 func NormalizeTitle(title string) string {
 	title = strings.TrimSpace(title)
-	// Strip parenthetical disambiguation
 	if idx := strings.Index(title, " ("); idx >= 0 {
 		suffix := strings.ToLower(title[idx:])
 		for _, pattern := range []string{
@@ -435,7 +401,6 @@ func NormalizeTitle(title string) string {
 	return strings.TrimSpace(title)
 }
 
-// NormalizeSlug ensures a slug is valid: lowercase, only [a-z0-9-], no consecutive hyphens.
 func NormalizeSlug(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var b strings.Builder
@@ -450,10 +415,8 @@ func NormalizeSlug(s string) string {
 				prevHyphen = true
 			}
 		}
-		// Skip all other characters
 	}
 	result := strings.Trim(b.String(), "-")
-	// Remove leading/trailing hyphens from consecutive hyphens -> single
 	for strings.Contains(result, "--") {
 		result = strings.ReplaceAll(result, "--", "-")
 	}
@@ -463,7 +426,6 @@ func NormalizeSlug(s string) string {
 func normalizeKey(s string) string {
 	s = strings.TrimSpace(stripTags(s))
 	s = strings.ToLower(s)
-	// Remove reference brackets like [1], [note 1]
 	for {
 		bracket := strings.Index(s, "[")
 		if bracket < 0 {
@@ -478,10 +440,6 @@ func normalizeKey(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// removeStyleAndScript deletes <style>...</style> and <script>...</script>
-// blocks including their text content. These are not visible text and must be
-// stripped before any other processing because a naive <tag> stripper treats
-// CSS/JS inside them as visible text.
 func removeStyleAndScript(s string) string {
 	for _, tag := range []string{"style", "script"} {
 		for {
@@ -500,19 +458,16 @@ func removeStyleAndScript(s string) string {
 }
 
 func findOpenTag(s, tag string) int {
-	// Match <tag> or <tag ...>
 	lower := strings.ToLower(s)
 	for {
 		idx := strings.Index(lower, "<"+tag)
 		if idx < 0 {
 			return -1
 		}
-		// Make sure the character after the tag name is > or space (not part of another tag name like "style" vs "styles")
 		after := idx + 1 + len(tag)
 		if after < len(lower) && (lower[after] == '>' || lower[after] == ' ' || lower[after] == '\t' || lower[after] == '\n') {
 			return idx
 		}
-		// False match (e.g., <styles>), keep searching
 		lower = lower[after:]
 		s = s[after:]
 	}
@@ -548,6 +503,5 @@ func stripTags(s string) string {
 }
 
 func cleanSnippet(s string) string {
-	// Remove HTML tags from snippet
 	return strings.TrimSpace(stripTags(s))
 }

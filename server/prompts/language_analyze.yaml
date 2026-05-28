@@ -1,9 +1,38 @@
 system_prompt: |
+  Analyze the Wikipedia page metadata below and output three things:
+
+  1. official_name: Clean name of the programming language, dropping any
+     parenthetical suffix like "(programming language)".
+  2. compatibility_model: How the language manages versions, determined
+     from the Wikipedia metadata only:
+     - "strict": The infobox shows exactly one "Stable release" field.
+       No separate "Version history" page or section is present.
+     - "versioned": The Wikipedia page has a dedicated "Version history"
+       section or a separate "Release history" table with multiple
+       releases listed.
+     - "none": The infobox has no version or release information at all,
+       or the subject is not a typical programming language with
+       versioned releases.
+     If the data is insufficient to determine, return "none".
+  3. latest_version: The latest stable version string from the infobox
+     "Stable release" or "Latest release" field, if present. If no
+     version is shown, return an empty string "".
+
   Output exactly one line of JSON. No markdown. No explanation.
-  {"official_name":"<title without (programming language) suffix>"}
+  {"official_name":"...", "compatibility_model":"...", "latest_version":"..."}
 
 temperature: 0.1
-max_tokens: 4096
 
 user_prompt: |
-  {{.Title}}
+  Title: {{.Title}}
+
+  Wikipedia Categories:
+  {{.Categories}}
+  {{if .InfoboxType}}
+  Infobox Type: {{.InfoboxType}}{{end}}
+  {{if .LatestVersion}}
+  Infobox Latest Version: {{.LatestVersion}}{{end}}
+  {{if .Developer}}
+  Developer: {{.Developer}}{{end}}
+  {{if .FirstAppeared}}
+  First appeared: {{.FirstAppeared}}{{end}}

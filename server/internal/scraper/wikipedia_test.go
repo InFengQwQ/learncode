@@ -172,26 +172,6 @@ func contains(t *testing.T, s, substr string) bool {
 	return false
 }
 
-func TestCompatibilityModel(t *testing.T) {
-	tests := []struct {
-		name string
-		cats []string
-		want string
-	}{
-		{"unknown", nil, "versioned"},
-		{"unknown", []string{"Esoteric programming languages"}, "none"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := CompatibilityModel(tt.name, tt.cats, nil)
-			if got != tt.want {
-				t.Errorf("CompatibilityModel(%q) = %q, want %q", tt.name, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestIsEsoteric(t *testing.T) {
 	tests := []struct {
 		cats []string

@@ -1,61 +1,72 @@
 system_prompt: |
-  You extract structured version information from the text of a
-  programming language's download/release/changelog page.
-  {{if eq .IsChunk "true"}}NOTE: The text below is a CHUNK of a larger page.
-  Extract every version you find in this chunk, even if it seems
-  incomplete — a later step will merge and deduplicate.
+  You extract version numbers and release dates for a programming language
+  from its download/release/changelog page text.
+
+  CRITICAL: Output ONLY valid JSON. Never include any text, preamble,
+  markdown, or reasoning before or after the JSON object.
+
+  {{if eq .IsChunk "true"}}NOTE: This is a CHUNK of a larger page. Extract
+  every version you find in this chunk — a later merge step will deduplicate.
+  {{if .PreviousContext}}Previous chunk context: {{.PreviousContext}}
+  Only extract versions NOT already covered by the previous chunk context.{{end}}
   {{end}}
 
-  Output ONLY a JSON object. No text, no markdown.
+  VersionLevel: {{.VersionLevel}}
+  {{if eq .VersionLevel "patch"}}
+  Focus: Extract only versions belonging to {{.ParentVersion}}.
+  E.g. if ParentVersion is "1.22", extract "1.22.1", "1.22.2", etc.
+  Exclude any version that does not start with "{{.ParentVersion}}.".
+  {{else}}
+  Extract ALL versions visible in the text. Include every release,
+  update, and patch — do NOT skip or filter any version.
+  {{end}}
+
+  This is a pure extraction task. Do not analyze, compare, or judge
+  the versions. Just scan the text and output what you find.
+
+  Output format (compact, no extra fields):
   {
     "versions": [
-      {
-        "version": "X.Y.Z",
-        "download_url": "https://...",
-        "lts": true,
-        "released": "2024-10",
-        "brief": "one-line description from the page"
-      }
+      {"version": "X.Y.Z", "released": "2024-10", "download_url": "https://example.com/..."}
     ],
     "latest": "X.Y.Z",
-    "docker_refs": ["lang:version", "lang:version-slim"]
+    "docker_refs": ["lang:version"],
+    "next_context": "Brief summary of what was found, for the next chunk to continue from"
   }
 
-  CRITICAL RULES:
-  - version: MUST be a real version string visible in the page text.
-    Copy it EXACTLY as written. If the page says "Language X.Y.Z",
-    output "X.Y.Z". If it says "vA.B.C", output "A.B.C".
-    NEVER fabricate, never use your training data, never fill gaps.
-  - download_url: Exact download link from the page. Empty if not present.
-  - lts: true ONLY if the page explicitly marks this as LTS/long-term.
+  RULES:
+  - version: Copy EXACTLY from page text. Strip leading "v"/"go" prefix
+    (e.g. "v1.2.3" → "1.2.3", "go1.24" → "1.24"). NEVER fabricate.
+  - A valid version must contain at least one decimal point (e.g. "1.2", "3.4.5").
+    A bare number like "1" or "22" is NOT a version — skip it.
   - released: Date from the page (YYYY-MM or YYYY-MM-DD). Empty if not shown.
-  - brief: One-line summary from the page. Empty if not present.
-  - latest: The latest stable version string visible in this chunk.
-    {{if eq .IsChunk "true"}}Leave empty — the merge step will determine latest.{{end}}
-  - docker_refs: Docker image references found in text (e.g.
-    "docker pull lang:version", "FROM lang:version-slim").
-    Empty array if none found.
-  - Compatibility model:
-    * Strict ({{.CompatibilityModel}}==="strict"): output ONLY the
-      single latest stable version.
-    * Versioned ({{.CompatibilityModel}}==="versioned"): output ALL
-      visible versions in this text. Do NOT limit to just a few.
-      Include every stable release you see, sorted newest first.
-  - If the text contains NO usable version information, return an
-    empty versions array. It is better to return nothing than to guess.
+    Include dates whenever visible.
+  - download_url: Full URL to the downloadable package, if visible. Omit if not found.
+  - latest: The latest stable version visible in this chunk.
+    {{if eq .IsChunk "true"}}Leave empty — final step determines latest.{{end}}
+  - docker_refs: Docker/podman image references. Empty array if none found.
+  - No version found → empty "versions" array. Never guess or invent.
+  - SEMANTIC FILTER: Only releases of {{.LanguageName}} itself.
+    Ignore unrelated software (e.g. "Unicode 8.0", "Linux 3.19").
+  - {{if eq .IsChunk "true"}}next_context: One short sentence summarizing what was extracted,
+    e.g. "Found versions 1.26.3 through 1.25.10 from the top of the download table."
+    This summary is passed to the next chunk so it can continue without re-extracting.
+    Keep under 200 characters.{{end}}
 
-temperature: 0.1
-max_tokens: 4096
+temperature: 0.0
 
 user_prompt: |
   Language: {{.LanguageName}}
   Slug: {{.Slug}}
   Compatibility Model: {{.CompatibilityModel}}
   Page URL: {{.PageURL}}
-  {{if eq .IsChunk "true"}}This is one chunk of a larger page — a merge step will follow.{{end}}
+  Version Level: {{.VersionLevel}}
+  {{if eq .VersionLevel "patch"}}Parent Version: {{.ParentVersion}}{{end}}
+  {{if eq .IsChunk "true"}}This is one chunk of a larger page — a merge step will follow.
+  {{if .PreviousContext}}Previous chunk summary: {{.PreviousContext}}{{end}}{{end}}
 
   Page text:
   {{.PageText}}
 
-  Extract version information from this text. Remember to also capture
-  any Docker/podman/container image references you see.
+  Extract version information from this text. Output ONLY valid JSON —
+  no text, no reasoning, no markdown.

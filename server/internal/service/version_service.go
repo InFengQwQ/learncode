@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jmoiron/sqlx"
+
 	"learncode/internal/executor"
 	"learncode/internal/model"
 	"learncode/internal/repo"
@@ -23,8 +25,6 @@ func (s *VersionService) GetByID(ctx context.Context, id string) (*model.Languag
 	return s.Repo.GetByID(ctx, id)
 }
 
-// SetStatus changes a version's status between "active" and "archived".
-// For strict languages, archiving the active version also activates the next candidate if one exists.
 func (s *VersionService) SetStatus(ctx context.Context, versionID string, newStatus string) (*model.LanguageVersion, error) {
 	v, err := s.Repo.GetByID(ctx, versionID)
 	if err != nil {
@@ -40,7 +40,6 @@ func (s *VersionService) SetStatus(ctx context.Context, versionID string, newSta
 	}
 
 	if lang.CompatibilityModel == "strict" && newStatus == "active" {
-		// Archive the previously active version first
 		if err := s.Repo.ArchiveActiveByLanguage(ctx, v.LanguageID); err != nil {
 			return nil, fmt.Errorf("archive previous: %w", err)
 		}
@@ -54,15 +53,11 @@ func (s *VersionService) SetStatus(ctx context.Context, versionID string, newSta
 }
 
 func (s *VersionService) Create(ctx context.Context, v *model.LanguageVersion) error {
-	// Look up the language to get slug and compatibility_model.
 	lang, err := s.LangRepo.GetByID(ctx, v.LanguageID)
 	if err != nil {
 		return fmt.Errorf("lookup language %s: %w", v.LanguageID, err)
 	}
 
-	// Prerequisite: the language must have been researched, or have a known
-	// runtime config that can be auto-provisioned. Without either, creating
-	// a version is meaningless — there are no resources to build from.
 	if lang.ResearchedAt == nil {
 		rc := executor.DefaultRuntimeConfig(lang.Slug)
 		if !rc.IsComplete() {
@@ -70,27 +65,57 @@ func (s *VersionService) Create(ctx context.Context, v *model.LanguageVersion) e
 		}
 	}
 
-	// Auto-populate runtime_config from the default lookup table.
-	// Only fill it in if the caller didn't provide one.
 	if len(v.RuntimeConfig) == 0 || string(v.RuntimeConfig) == "null" {
 		rc := executor.DefaultRuntimeConfig(lang.Slug)
 		v.RuntimeConfig = rc.Marshal()
 	}
 
-	// For strict languages, only one active version is allowed at a time.
-	// Archive the currently active version before creating the new one.
 	if lang.CompatibilityModel == "strict" {
-		if err := s.Repo.ArchiveActiveByLanguage(ctx, v.LanguageID); err != nil {
+		tx, err := s.Repo.DB.BeginTxx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+
+		if err := s.Repo.ArchiveActiveByLanguageTx(ctx, tx, v.LanguageID); err != nil {
 			return fmt.Errorf("archive previous version for strict language %s: %w", lang.Slug, err)
 		}
+		if err := s.Repo.CreateTx(ctx, tx, v); err != nil {
+			return fmt.Errorf("create version: %w", err)
+		}
+		return tx.Commit()
 	}
 
 	return s.Repo.Create(ctx, v)
 }
 
-// CheckLanguageActivation checks whether a language should be active or inactive
-// based on its versions' kb_status values. If any version has kb_status = 'complete',
-// the language is activated; otherwise it is deactivated.
+func (s *VersionService) CreateWithTx(ctx context.Context, tx *sqlx.Tx, v *model.LanguageVersion) error {
+	lang, err := s.LangRepo.GetByID(ctx, v.LanguageID)
+	if err != nil {
+		return fmt.Errorf("lookup language %s: %w", v.LanguageID, err)
+	}
+
+	if lang.ResearchedAt == nil {
+		rc := executor.DefaultRuntimeConfig(lang.Slug)
+		if !rc.IsComplete() {
+			return fmt.Errorf("language %q has not been researched yet and has no known runtime configuration", lang.Name)
+		}
+	}
+
+	if len(v.RuntimeConfig) == 0 || string(v.RuntimeConfig) == "null" {
+		rc := executor.DefaultRuntimeConfig(lang.Slug)
+		v.RuntimeConfig = rc.Marshal()
+	}
+
+	if lang.CompatibilityModel == "strict" {
+		if err := s.Repo.ArchiveActiveByLanguageTx(ctx, tx, v.LanguageID); err != nil {
+			return fmt.Errorf("archive previous version for strict language %s: %w", lang.Slug, err)
+		}
+	}
+
+	return s.Repo.CreateTx(ctx, tx, v)
+}
+
 func (s *VersionService) CheckLanguageActivation(ctx context.Context, languageID string) error {
 	count, err := s.Repo.CountByKBStatus(ctx, languageID, "complete")
 	if err != nil {

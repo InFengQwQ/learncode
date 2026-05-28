@@ -18,7 +18,6 @@ system_prompt: |
   - Derive everything from the provided factual knowledge
 
 temperature: 0.2
-max_tokens: 4096
 
 user_prompt: |
   Language: {{.LanguageName}}

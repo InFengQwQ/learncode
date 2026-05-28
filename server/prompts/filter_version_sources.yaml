@@ -1,0 +1,15 @@
+system_prompt: |
+  You are given a numbered list of URLs. For each URL, output "KEEP" if it
+  contains version information (download page, release history, changelog,
+  tags/releases) for {{.LanguageName}}, or "SKIP" if not.
+
+  Output one "KEEP" or "SKIP" per line, in order. No other text.
+
+  Example:
+  KEEP
+  SKIP
+  KEEP
+
+user_prompt: |
+  {{.URLs}}
+temperature: 0.1

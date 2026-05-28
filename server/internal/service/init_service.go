@@ -13,22 +13,19 @@ import (
 	"learncode/internal/repo"
 )
 
-// VersionInitResult is the result of initializing a version's runtime environment.
 type VersionInitResult struct {
-	Status   string `json:"status"` // "success" | "unavailable" | "host_mode"
+	Status   string `json:"status"`
 	Message  string `json:"message"`
 	Verified bool   `json:"verified"`
 	ImageRef string `json:"image_ref"`
 }
 
-// InitService handles version environment initialization.
 type InitService struct {
 	VersionRepo *repo.VersionRepo
 	LangRepo    *repo.LanguageRepo
 	Docker      *docker.Client
 }
 
-// Initialize verifies and prepares the runtime environment for a version.
 func (s *InitService) Initialize(ctx context.Context, versionID string) (*VersionInitResult, error) {
 	version, err := s.VersionRepo.GetByID(ctx, versionID)
 	if err != nil {
@@ -45,7 +42,6 @@ func (s *InitService) Initialize(ctx context.Context, versionID string) (*Versio
 		rc = executor.DefaultRuntimeConfig(lang.Slug)
 	}
 
-	// Resolve image from the version's pre-collected source_urls (set during Confirm).
 	image := rc.Image
 	if image == "" && len(version.SourceURLs) > 0 {
 		var src struct {
@@ -57,12 +53,10 @@ func (s *InitService) Initialize(ctx context.Context, versionID string) (*Versio
 		}
 	}
 
-	// Docker path
 	if s.Docker != nil && s.Docker.Available() && image != "" {
 		return s.initWithDocker(ctx, version, lang, rc, image)
 	}
 
-	// Fallback: host mode
 	return s.initOnHost(ctx, version, rc)
 }
 
@@ -79,17 +73,11 @@ func (s *InitService) initWithDocker(ctx context.Context, version *model.Languag
 		slog.Info("image pulled", "image", image)
 	}
 
-	// Build a usable runtime config from discovered data.
-	// Image comes from the DiscoveredVersion. Interpreter defaults to the slug
-	// (which matches the Docker image name and typically the interpreter binary).
-	// Extension, Type, and RunCmd are left empty — the Executor fills in defaults
-	// for Docker execution.
 	rc.Image = image
 	if rc.Interpreter == "" {
 		rc.Interpreter = lang.Slug
 	}
 
-	// Verify the interpreter binary exists inside the container.
 	versionOutput, verifyErr := s.Docker.VerifyInterpreter(ctx, image, rc.Interpreter)
 	if verifyErr != nil {
 		slog.Warn("interpreter verification failed — image may not contain the expected runtime",
@@ -117,7 +105,6 @@ func (s *InitService) initOnHost(ctx context.Context, version *model.LanguageVer
 		return nil, fmt.Errorf("Docker unavailable and no interpreter set in runtime config")
 	}
 	if path, err := exec.LookPath(interpreter); err == nil {
-		// Preserve any previously stored image reference.
 		image := version.Image
 		if err := s.markInitialized(ctx, version.ID, image, rc); err != nil {
 			return nil, err
@@ -137,6 +124,3 @@ func (s *InitService) markInitialized(ctx context.Context, versionID string, ima
 	rcBytes := rc.Marshal()
 	return s.VersionRepo.MarkInitialized(ctx, versionID, image, rcBytes)
 }
-
-// Ensure slog is used
-var _ = slog.Info

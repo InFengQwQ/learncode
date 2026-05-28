@@ -23,7 +23,6 @@ system_prompt: |
   - Every claim in description must be traceable to an observation
 
 temperature: 0.1
-max_tokens: 4096
 
 user_prompt: |
   Language: {{.LanguageName}} ({{.Slug}})

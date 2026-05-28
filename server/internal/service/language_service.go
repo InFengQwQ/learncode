@@ -50,6 +50,7 @@ func (s *LanguageService) Create(ctx context.Context, input CreateLanguageInput)
 	lang := &model.Language{
 		Name:               input.Name,
 		Slug:               input.Slug,
+		WikiTitle:          input.WikiTitle,
 		Icon:               input.Icon,
 		CompatibilityModel: input.CompatibilityModel,
 		SourceURLs:         input.SourceURLs,
@@ -63,6 +64,7 @@ func (s *LanguageService) Create(ctx context.Context, input CreateLanguageInput)
 type CreateLanguageInput struct {
 	Name               string          `json:"name"`
 	Slug               string          `json:"slug"`
+	WikiTitle          string          `json:"wiki_title"`
 	Icon               string          `json:"icon"`
 	CompatibilityModel string          `json:"compatibility_model"`
 	SourceURLs         json.RawMessage `json:"source_urls"`

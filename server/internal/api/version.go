@@ -98,7 +98,6 @@ func (h *VersionHandler) Initialize(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusOK, result)
 }
 
-// Knowledge returns all knowledge entries for a version (shared language-level + version-specific).
 func (h *VersionHandler) Knowledge(w http.ResponseWriter, r *http.Request) {
 	versionID := chi.URLParam(r, "versionId")
 
@@ -136,8 +135,6 @@ func (h *VersionHandler) Knowledge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// SetStatus changes a version's status between "active" and "archived".
-// For strict languages, activating a new version archives the old one automatically.
 func (h *VersionHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
 	versionID := chi.URLParam(r, "versionId")
 
@@ -162,8 +159,6 @@ func (h *VersionHandler) SetStatus(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, http.StatusOK, v)
 }
 
-// BuildKnowledge triggers asynchronous knowledge base construction for a version.
-// It starts the build in a goroutine and returns 202 Accepted immediately.
 func (h *VersionHandler) BuildKnowledge(w http.ResponseWriter, r *http.Request) {
 	versionID := chi.URLParam(r, "versionId")
 
@@ -192,8 +187,6 @@ func (h *VersionHandler) BuildKnowledge(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Run build asynchronously — use background context since the request
-	// context is canceled when the HTTP handler returns (202 Accepted).
 	go func() {
 		if err := h.KBBuild.Build(context.Background(), versionID); err != nil {
 			slog.Error("knowledge base build failed", "version_id", versionID, "error", err)

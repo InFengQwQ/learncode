@@ -17,11 +17,6 @@ llm:
         - name: local
           endpoint: http://host.docker.internal:1234/v1
           models:
-            - qwen/qwen3.5-9b
             - google/gemma-4-e4b
+            - qwen/qwen3.5-9b
           api_key: not-needed
-        - name: DeepSeek
-          endpoint: https://api.deepseek.com/v1
-          models:
-            - deepseek-v4-flash
-          api_key: sk-71880f58dc9c40e589093861e0355cb0

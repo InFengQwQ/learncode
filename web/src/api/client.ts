@@ -1,4 +1,9 @@
+import { readNDJSONStream } from './stream'
+import { requestDeduped } from '../lib/dedup'
+
 const BASE = '/api/v1'
+const REQUEST_TIMEOUT = 30000
+const MAX_RETRIES = 2
 
 export interface APIResponse<T> {
   ok: boolean
@@ -55,6 +60,7 @@ export interface DiscoveredVersion {
 export interface InitSuggestion {
   name: string
   slug: string
+  wiki_title?: string
   icon: string
   compatibility_model: string
   description: string
@@ -71,6 +77,7 @@ export interface InitSuggestion {
 export interface InitConfirmInput {
   name: string
   slug: string
+  wiki_title?: string
   icon: string
   compatibility_model: string
   docs_url?: string
@@ -85,15 +92,87 @@ export interface InitResult {
   initialized_versions: string[]
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<APIResponse<T>> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  if (res.status === 204) {
-    return { ok: true, data: undefined }
+function friendlyError(err: string): string {
+  if (err.startsWith('Wikipedia') || err.startsWith('LLM') || err.startsWith('未找到')) return err
+  if (err.includes('language not found')) return '未找到此名称的编程语言'
+  if (err.includes('not a programming language')) return '这不是一门编程语言'
+  if (err.includes('no Wikipedia article')) return '在 Wikipedia 中未找到此名称'
+  if (err.includes('strict language') && err.includes('no versions')) return '未能发现任何版本，无法创建严格模式语言'
+  if (err.includes('invalid compatibility_model')) return '兼容性模型无效'
+  if (err.includes('invalid slug')) return '标识符格式无效'
+  if (err.includes('network')) return '网络连接失败，请检查网络后重试'
+  if (err.includes('timeout')) return '查询超时，请稍后重试'
+  return err
+}
+
+function combineSignals(...signals: (AbortSignal | undefined)[]): AbortSignal {
+  const controller = new AbortController()
+  for (const signal of signals) {
+    if (signal?.aborted) {
+      controller.abort(signal.reason)
+      return controller.signal
+    }
+    signal?.addEventListener('abort', () => controller.abort(signal.reason), { once: true })
   }
-  return res.json()
+  return controller.signal
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<APIResponse<T>> {
+  const timeoutController = new AbortController()
+  const timeoutId = setTimeout(() => timeoutController.abort(new DOMException('Timeout', 'TimeoutError')), REQUEST_TIMEOUT)
+
+  const combinedSignal = options?.signal
+    ? combineSignals(options.signal, timeoutController.signal)
+    : timeoutController.signal
+
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+    try {
+      const res = await fetch(`${BASE}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+        signal: combinedSignal,
+      })
+
+      clearTimeout(timeoutId)
+
+      if (res.status === 204) {
+        return { ok: true, data: undefined }
+      }
+
+      const json: APIResponse<T> = await res.json()
+
+      // Normalize error strings for client display
+      if (!json.ok && json.error) {
+        json.error = friendlyError(json.error)
+      }
+
+      // Retry on 5xx
+      if (res.status >= 500 && attempt <= MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, 1000 * attempt))
+        continue
+      }
+
+      return json
+    } catch (e) {
+      // Don't retry aborted requests
+      if (e instanceof DOMException && (e.name === 'AbortError' || e.name === 'TimeoutError')) {
+        clearTimeout(timeoutId)
+        return { ok: false, error: e.name === 'TimeoutError' ? '请求超时，请稍后重试' : '已取消' }
+      }
+
+      if (attempt <= MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, 1000 * attempt))
+        continue
+      }
+    }
+  }
+
+  clearTimeout(timeoutId)
+  return { ok: false, error: '网络连接失败，请检查网络后重试' }
+}
+
+async function requestGet<T>(path: string): Promise<APIResponse<T>> {
+  return requestDeduped(() => request<T>(path), path)
 }
 
 export interface ResourceEntry {
@@ -103,14 +182,14 @@ export interface ResourceEntry {
 }
 
 export interface ResearchResult {
-  docs: ResourceEntry[]
-  runtimes: ResourceEntry[]
-  specs: ResourceEntry[]
+  docs: ResourceEntry[] | null
+  runtimes: ResourceEntry[] | null
+  specs: ResourceEntry[] | null
 }
 
 export const languages = {
-  list: () => request<Language[]>('/languages'),
-  get: (id: string) => request<Language>(`/languages/${id}`),
+  list: () => requestGet<Language[]>('/languages'),
+  get: (id: string) => requestGet<Language>(`/languages/${id}`),
   create: (input: CreateLanguageInput) =>
     request<Language>('/languages', {
       method: 'POST',
@@ -118,54 +197,49 @@ export const languages = {
     }),
   delete: (id: string) =>
     request<void>(`/languages/${id}`, { method: 'DELETE' }),
-  initQuery: (name: string) =>
+  initQuery: (name: string, signal?: AbortSignal) =>
     request<InitSuggestion>('/languages/init?step=query', {
       method: 'POST',
       body: JSON.stringify({ name }),
+      signal,
     }),
 
   // Streams query progress as NDJSON lines. Each line is a JSON object:
   //   {"step":"wikipedia_search","status":"running","message":"…"}
   //   {"step":"fatal","status":"error","message":"…"}  (on failure)
   //   {"ok":true,"data":{…}}  (final result)
-  initQueryStream: async function* (name: string): AsyncGenerator<Record<string, unknown>> {
+  initQueryStream: async function* (name: string, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
     const res = await fetch(`${BASE}/languages/init?step=query&stream=true`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
+      signal,
     })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-      yield { step: 'fatal', status: 'error', message: (err as Record<string, string>).error ?? `HTTP ${res.status}` }
-      return
-    }
-    const reader = res.body!.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() ?? ''
-      for (const line of lines) {
-        if (!line.trim()) continue
-        try { yield JSON.parse(line) } catch { /* skip malformed lines */ }
-      }
-    }
-    if (buf.trim()) {
-      try { yield JSON.parse(buf) } catch { /* skip */ }
-    }
+    yield* readNDJSONStream(res, signal)
   },
-  initConfirm: (input: InitConfirmInput) =>
+  initConfirm: (input: InitConfirmInput, signal?: AbortSignal) =>
     request<InitResult>('/languages/init?step=confirm', {
       method: 'POST',
       body: JSON.stringify(input),
+      signal,
     }),
-  research: (id: string) =>
+  research: (id: string, signal?: AbortSignal) =>
     request<ResearchResult>(`/languages/${id}/research`, {
       method: 'POST',
+      signal,
     }),
+  discoverVersions: (id: string) =>
+    request<LanguageVersion[]>(`/languages/${id}/discover-versions`, {
+      method: 'POST',
+    }),
+  discoverVersionsStream: async function* (id: string, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
+    const res = await fetch(`${BASE}/languages/${id}/discover-versions?stream=true`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+    })
+    yield* readNDJSONStream(res, signal)
+  },
 }
 
 export interface CreateVersionInput {
@@ -182,20 +256,22 @@ export interface VersionInitResult {
 
 export const versions = {
   listByLanguage: (languageId: string) =>
-    request<LanguageVersion[]>(`/languages/${languageId}/versions`),
-  get: (id: string) => request<LanguageVersion>(`/versions/${id}`),
+    requestGet<LanguageVersion[]>(`/languages/${languageId}/versions`),
+  get: (id: string) => requestGet<LanguageVersion>(`/versions/${id}`),
   create: (languageId: string, input: CreateVersionInput) =>
     request<LanguageVersion>(`/languages/${languageId}/versions`, {
       method: 'POST',
       body: JSON.stringify(input),
     }),
-  initialize: (versionId: string) =>
+  initialize: (versionId: string, signal?: AbortSignal) =>
     request<VersionInitResult>(`/versions/${versionId}/initialize`, {
       method: 'POST',
+      signal,
     }),
-  buildKnowledge: (versionId: string) =>
+  buildKnowledge: (versionId: string, signal?: AbortSignal) =>
     request<{ status: string; version_id: string }>(`/versions/${versionId}/build-knowledge`, {
       method: 'POST',
+      signal,
     }),
   setStatus: (versionId: string, status: 'active' | 'archived') =>
     request<LanguageVersion>(`/versions/${versionId}/status`, {
@@ -220,7 +296,7 @@ export interface KnowledgeEntry {
 export const knowledge = {
   list: (versionId: string) =>
     request<{ shared: KnowledgeEntry[]; private: KnowledgeEntry[] }>(
-      `/versions/${versionId}/knowledge`
+      `/versions/${versionId}/knowledge`,
     ),
 }
 
@@ -237,10 +313,11 @@ export interface ExecuteOutput {
 }
 
 export const execute = {
-  run: (input: ExecuteInput) =>
+  run: (input: ExecuteInput, signal?: AbortSignal) =>
     request<ExecuteOutput>('/execute', {
       method: 'POST',
       body: JSON.stringify(input),
+      signal,
     }),
 }
 
@@ -257,7 +334,7 @@ export interface LLMConfig {
 }
 
 export const config = {
-  getLLM: () => request<LLMConfig>('/config/llm'),
+  getLLM: () => requestGet<LLMConfig>('/config/llm'),
   updateLLM: (cfg: LLMConfig) =>
     request<LLMConfig>('/config/llm', {
       method: 'PUT',

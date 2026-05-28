@@ -48,8 +48,6 @@ func (r *KnowledgeRepo) ListByVersion(ctx context.Context, versionID string) ([]
 	return entries, err
 }
 
-// ListByScope returns all entries for a language filtered by scope.
-// scope must be one of: "core", "version", "idiom".
 func (r *KnowledgeRepo) ListByScope(ctx context.Context, languageID string, scope string) ([]model.KnowledgeEntry, error) {
 	var entries []model.KnowledgeEntry
 	err := r.DB.SelectContext(ctx, &entries,
@@ -87,7 +85,6 @@ func (r *KnowledgeRepo) CountByLanguage(ctx context.Context, languageID string) 
 	return count, err
 }
 
-// UpdateContent updates the content JSON of a knowledge entry.
 func (r *KnowledgeRepo) UpdateContent(ctx context.Context, id string, content json.RawMessage) error {
 	_, err := r.DB.ExecContext(ctx,
 		`UPDATE knowledge_entries SET content = $2, updated_at = NOW() WHERE id = $1`,
@@ -96,8 +93,6 @@ func (r *KnowledgeRepo) UpdateContent(ctx context.Context, id string, content js
 	return err
 }
 
-// Upsert inserts a new knowledge entry or updates an existing one
-// based on the unique constraint (language_id, scope, topic).
 func (r *KnowledgeRepo) Upsert(ctx context.Context, entry *model.KnowledgeEntry) error {
 	return r.DB.GetContext(ctx, entry,
 		`INSERT INTO knowledge_entries (language_id, version_id, scope, category, topic, content, source)

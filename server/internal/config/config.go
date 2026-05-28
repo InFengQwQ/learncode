@@ -44,7 +44,6 @@ type LLMProviderConfig struct {
 	Model    string   `yaml:"-"` // backward compat: defaults to Models[0]
 }
 
-// DefaultModel returns the first model in Models, or empty string if none.
 func (p *LLMProviderConfig) DefaultModel() string {
 	if p.Model != "" {
 		return p.Model
@@ -125,13 +124,11 @@ func Save(path string, cfg *Config) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// LLMConfigResponse is the API-facing LLM config with masked secrets.
 type LLMConfigResponse struct {
 	Default   string                `json:"default"`
 	Providers []LLMProviderResponse `json:"providers"`
 }
 
-// LLMProviderResponse is a provider entry with API key masked for safe display.
 type LLMProviderResponse struct {
 	Name     string   `json:"name"`
 	Endpoint string   `json:"endpoint"`
@@ -139,7 +136,6 @@ type LLMProviderResponse struct {
 	APIKey   string   `json:"api_key"`
 }
 
-// ToLLMConfigResponse converts the internal LLM config to an API-safe version.
 func (c *LLMConfig) ToResponse() LLMConfigResponse {
 	providers := make([]LLMProviderResponse, len(c.Providers))
 	for i, p := range c.Providers {

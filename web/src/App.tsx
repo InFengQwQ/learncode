@@ -1,24 +1,32 @@
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
+import ErrorBoundary from './components/ErrorBoundary'
+import { AppProvider } from './context/AppContext'
 import HomePage from './pages/HomePage'
 import LanguagesPage from './pages/LanguagesPage'
 import LanguageDetailPage from './pages/LanguageDetailPage'
 import AddLanguagePage from './pages/AddLanguagePage'
+import PlaygroundPage from './pages/PlaygroundPage'
 import SettingsPage from './pages/SettingsPage'
 import NotFoundPage from './pages/NotFoundPage'
 
 function App() {
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/languages" element={<LanguagesPage />} />
-        <Route path="/languages/add" element={<AddLanguagePage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/languages/:id" element={<LanguageDetailPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Route>
-    </Routes>
+    <AppProvider>
+      <ErrorBoundary>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/languages" element={<LanguagesPage />} />
+            <Route path="/languages/add" element={<AddLanguagePage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/languages/:id" element={<LanguageDetailPage />} />
+            <Route path="/playground/:id" element={<PlaygroundPage />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+        </Routes>
+      </ErrorBoundary>
+    </AppProvider>
   )
 }
 

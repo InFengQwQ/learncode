@@ -71,6 +71,8 @@ type LanguageInitService struct {
 type analyzeResult struct {
 	OfficialName string `json:"official_name"`
 	Description  string `json:"description"`
+	CompatibilityModel string `json:"compatibility_model"`
+	LatestVersion      string `json:"latest_version"`
 }
 
 // ─── Query: Wikipedia lookup → LLM analysis → version discovery ───
@@ -138,7 +140,7 @@ func (s *LanguageInitService) QueryWithProgress(ctx context.Context, languageNam
 	}
 	emit("llm_analyze", "done", "分析完成: "+analysis.OfficialName)
 
-	compatModel := scraper.CompatibilityModel(analysis.OfficialName, cats, info)
+	compatModel := analysis.CompatibilityModel
 	slug := scraper.NormalizeSlug(analysis.OfficialName)
 	icon := fetchIcon(ctx, s.Scraper, page.Title, analysis.OfficialName)
 
@@ -934,6 +936,93 @@ type ResearchResult struct {
 	Specs    []ResourceEntry `json:"specs"`
 }
 
+func (s *LanguageInitService) DiscoverHistoricalVersions(ctx context.Context, languageID string, progress ProgressFunc) ([]model.LanguageVersion, error) {
+	emit := func(step, status, message string) {
+		if progress != nil {
+			progress(step, status, message)
+		}
+	}
+
+	lang, err := s.LangSvc.GetByID(ctx, languageID)
+	if err != nil {
+		return nil, fmt.Errorf("language not found: %w", err)
+	}
+
+	if lang.CompatibilityModel == "none" {
+		emit("discover_versions", "done", "语言无需版本管理")
+		return nil, nil
+	}
+
+	emit("discover_versions", "running", "正在收集版本来源信息…")
+
+	wt := s.wikiTitle(lang)
+	var websiteURL string
+	var wikiLinks []string
+	if s.Scraper != nil {
+		info, _ := s.Scraper.GetInfobox(ctx, wt)
+		if info != nil && info.Website != "" {
+			websiteURL = info.Website
+		}
+		links, _ := s.Scraper.GetExternalLinks(ctx, wt)
+		if len(links) > 0 {
+			wikiLinks = links
+		}
+	}
+
+	emit("discover_versions", "running", "正在从来源页面提取版本…")
+
+	discovered, err := s.discoverVersionsFromSource(ctx, lang.Name, lang.Slug, lang.CompatibilityModel, websiteURL, wikiLinks)
+	if err != nil {
+		emit("discover_versions", "error", err.Error())
+		return nil, fmt.Errorf("version discovery failed: %w", err)
+	}
+
+	existingVersions, err := s.VersionSvc.ListByLanguageID(ctx, languageID)
+	if err != nil {
+		return nil, fmt.Errorf("list existing versions: %w", err)
+	}
+	existingSet := make(map[string]bool)
+	for _, v := range existingVersions {
+		existingSet[v.Version] = true
+	}
+
+	var created []model.LanguageVersion
+	for _, dv := range discovered {
+		if existingSet[dv.Version] {
+			continue
+		}
+		v := &model.LanguageVersion{
+			LanguageID: languageID,
+			Version:    dv.Version,
+			Status:     "active",
+		}
+		if dv.DownloadURL != "" || dv.Source != "" || dv.ImageTag != "" || len(dv.DockerRefs) > 0 {
+			srcData, _ := json.Marshal(map[string]interface{}{
+				"download_url": dv.DownloadURL,
+				"source_page":  dv.Source,
+				"image_tag":    dv.ImageTag,
+				"docker_refs":  dv.DockerRefs,
+			})
+			v.SourceURLs = srcData
+		}
+		if err := s.VersionSvc.Create(ctx, v); err != nil {
+			slog.Warn("failed to create discovered version", "version", dv.Version, "error", err)
+			continue
+		}
+		created = append(created, *v)
+	}
+
+	emit("discover_versions", "done", fmt.Sprintf("发现 %d 个新版本", len(created)))
+	return created, nil
+}
+
+func (s *LanguageInitService) wikiTitle(lang *model.Language) string {
+	if lang.WikiTitle != "" {
+		return lang.WikiTitle
+	}
+	return lang.Name
+}
+
 func (s *LanguageInitService) Research(ctx context.Context, lang *model.Language) (*ResearchResult, error) {
 	if s.LLM == nil {
 		return nil, fmt.Errorf("llm service not available")
@@ -985,6 +1074,46 @@ func (s *LanguageInitService) Research(ctx context.Context, lang *model.Language
 	}
 	if err := llm.ParseLLMJSON(content, &llmResult); err != nil {
 		return nil, fmt.Errorf("parse research response: %w", err)
+	}
+
+	// If ParseLLMJSON produced empty arrays but content is non-empty,
+	// try direct json.Unmarshal as a fallback. This handles cases
+	// where the LLM response has minor JSON issues that confuse
+	// ParseLLMJSON's regex fallback (which can't extract arrays).
+	if len(llmResult.Docs)+len(llmResult.Runtimes)+len(llmResult.Specs) == 0 && len(content) > 0 {
+		var direct struct {
+			Docs     []ResourceEntry `json:"docs"`
+			Runtimes []ResourceEntry `json:"runtimes"`
+			Specs    []ResourceEntry `json:"specs"`
+		}
+		if err := json.Unmarshal([]byte(content), &direct); err == nil &&
+			(len(direct.Docs)+len(direct.Runtimes)+len(direct.Specs) > 0) {
+			llmResult.Docs = direct.Docs
+			llmResult.Runtimes = direct.Runtimes
+			llmResult.Specs = direct.Specs
+			slog.Info("[DEBUG] Research: direct Unmarshal recovered data",
+				"docs", len(direct.Docs), "runtimes", len(direct.Runtimes), "specs", len(direct.Specs))
+		} else {
+			// Try extracting content between first { and last } as fallback
+			firstBrace := strings.IndexByte(content, '{')
+			lastBrace := strings.LastIndexByte(content, '}')
+			if firstBrace >= 0 && lastBrace > firstBrace {
+				extracted := content[firstBrace : lastBrace+1]
+				var direct2 struct {
+					Docs     []ResourceEntry `json:"docs"`
+					Runtimes []ResourceEntry `json:"runtimes"`
+					Specs    []ResourceEntry `json:"specs"`
+				}
+				if err := json.Unmarshal([]byte(extracted), &direct2); err == nil &&
+					(len(direct2.Docs)+len(direct2.Runtimes)+len(direct2.Specs) > 0) {
+					llmResult.Docs = direct2.Docs
+					llmResult.Runtimes = direct2.Runtimes
+					llmResult.Specs = direct2.Specs
+					slog.Info("[DEBUG] Research: brace-extraction recovered data",
+						"docs", len(direct2.Docs), "runtimes", len(direct2.Runtimes), "specs", len(direct2.Specs))
+				}
+			}
+		}
 	}
 
 	return &ResearchResult{

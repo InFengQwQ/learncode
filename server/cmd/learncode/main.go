@@ -30,6 +30,8 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	flag.Parse()
 
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
@@ -53,7 +55,6 @@ func main() {
 	r.Use(api.Logging)
 	r.Use(api.CORS(cfg.Server.CORSOrigins))
 
-	// docker client
 	dockerClient, err := docker.NewClient()
 	if err != nil {
 		slog.Warn("docker not available, falling back to host execution", "error", err)
@@ -64,32 +65,26 @@ func main() {
 		slog.Warn("docker daemon not reachable, using host execution fallback")
 	}
 
-	// repos
 	langRepo := &repo.LanguageRepo{DB: db}
 	versionRepo := &repo.VersionRepo{DB: db}
 	knowledgeRepo := &repo.KnowledgeRepo{DB: db}
 
-	// services
 	langSvc := &service.LanguageService{Repo: langRepo}
 	versionSvc := &service.VersionService{Repo: versionRepo, LangRepo: langRepo}
 
-	// executor (Docker-first, os/exec fallback)
 	exec := executor.NewExecutor(dockerClient)
 
-	// llm
 	llmSvc, err := llm.NewService(cfg.LLM)
 	if err != nil {
 		slog.Warn("llm service not available", "error", err)
 	}
 
-	// version init service (Docker-based environment initialization)
 	initVersionSvc := &service.InitService{
 		VersionRepo: versionRepo,
 		LangRepo:    langRepo,
 		Docker:      dockerClient,
 	}
 
-	// kb build service — created before initSvc so it can be wired in.
 	var kbBuildSvc *service.KBBuildService
 	if llmSvc != nil {
 		explorer := &service.KBExplorer{
@@ -109,7 +104,6 @@ func main() {
 		}
 	}
 
-	// init service
 	var initSvc *service.LanguageInitService
 	if llmSvc != nil {
 		initSvc = &service.LanguageInitService{
@@ -123,7 +117,6 @@ func main() {
 		}
 	}
 
-	// handlers
 	langHandler := &api.LanguageHandler{Svc: langSvc, InitSvc: initSvc}
 	versionHandler := &api.VersionHandler{Svc: versionSvc, Init: initVersionSvc, KnowledgeRepo: knowledgeRepo, KBBuild: kbBuildSvc}
 	configHandler := &api.ConfigHandler{Cfg: cfg, Path: *configPath, LLMSvc: llmSvc}

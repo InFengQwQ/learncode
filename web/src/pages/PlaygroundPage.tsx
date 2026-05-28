@@ -1,50 +1,42 @@
 import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { languages, versions, execute, type Language, type LanguageVersion } from '../api/client'
+import { useApi } from '../hooks/useApi'
+import { languages, versions as versionsApi, execute, type Language, type LanguageVersion } from '../api/client'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
+import Skeleton from '../components/ui/Skeleton'
 
 export default function PlaygroundPage() {
   const { id } = useParams<{ id: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const [lang, setLang] = useState<Language | null>(null)
-  const [vers, setVers] = useState<LanguageVersion[]>([])
+  const { data: lang, loading: langLoading, error: langError } = useApi<Language>(
+    () => languages.get(id!),
+    { fetchOnMount: !!id },
+  )
+  const { data: vers, loading: versLoading } = useApi<LanguageVersion[]>(
+    () => versionsApi.listByLanguage(id!),
+    { fetchOnMount: !!id },
+  )
+
   const [selectedVersionId, setSelectedVersionId] = useState(searchParams.get('version') ?? '')
   const [code, setCode] = useState('')
   const [output, setOutput] = useState('')
   const [running, setRunning] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!id) return
-    Promise.all([
-      languages.get(id),
-      versions.listByLanguage(id),
-    ]).then(([langRes, verRes]) => {
-      if (langRes.ok && langRes.data) {
-        setLang(langRes.data)
-        if (verRes.ok && verRes.data) {
-          setVers(verRes.data)
-          if (verRes.data.length > 0 && !selectedVersionId) {
-            setSelectedVersionId(verRes.data[0].id)
-          }
-        }
-      } else {
-        setError(langRes.error ?? '加载失败')
-      }
-      setLoading(false)
-    })
-  }, [id])
+    if (vers && vers.length > 0 && !selectedVersionId) {
+      setSelectedVersionId(vers[0].id)
+    }
+  }, [vers, selectedVersionId])
 
   useEffect(() => {
     if (selectedVersionId) {
       setSearchParams({ version: selectedVersionId })
     }
-  }, [selectedVersionId])
+  }, [selectedVersionId, setSearchParams])
 
-  // Set initial code to empty — the system has no prior knowledge of any language's syntax
+  // Reset code when language changes
   useEffect(() => {
     setCode('')
   }, [lang])
@@ -75,44 +67,51 @@ export default function PlaygroundPage() {
     }
   }
 
-  if (loading) {
+  if (langLoading || versLoading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <p className="text-sm text-stone-500">加载中…</p>
+      <div className="animate-fade-in">
+        <Skeleton className="mb-1 h-7 w-48" />
+        <Skeleton className="h-4 w-64" />
+        <div className="mt-8 grid gap-6 lg:grid-cols-2">
+          <Skeleton className="h-96 rounded-xl" />
+          <Skeleton className="h-96 rounded-xl" />
+        </div>
       </div>
     )
   }
 
-  if (error) {
+  if (langError || !lang) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-sm text-red-400">错误: {error}</p>
+        <p className="text-sm text-danger">
+          {langError || '语言未找到'}
+        </p>
       </div>
     )
   }
-
-  if (!lang) return null
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <h1 className="text-2xl font-bold">Playground</h1>
-      <p className="mt-1 text-sm text-stone-400">
+      <p className="mt-1 text-sm text-text-secondary">
         {lang.name} — 在线编写和运行代码
       </p>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
         {/* Editor */}
         <Card className="p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <h2 className="text-sm font-semibold text-stone-300">代码</h2>
+              <h2 className="text-sm font-semibold text-text-primary">代码</h2>
               <select
                 value={selectedVersionId}
                 onChange={(e) => setSelectedVersionId(e.target.value)}
-                className="rounded-md border border-stone-700 bg-stone-800 px-2.5 py-1 text-xs text-stone-300 transition-colors focus:border-amber-500 focus:outline-none"
+                className="rounded-md border border-border bg-bg-subtle px-2.5 py-1 text-xs text-text-primary transition-colors focus:border-accent focus:outline-none"
               >
-                {vers.length === 0 && <option value="">无可用版本</option>}
-                {vers.map((v) => (
+                {(!vers || vers.length === 0) && (
+                  <option value="">无可用版本</option>
+                )}
+                {vers?.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.version}
                   </option>
@@ -121,7 +120,12 @@ export default function PlaygroundPage() {
             </div>
             <Button
               onClick={handleRun}
-              disabled={running || vers.length === 0 || !code.trim()}
+              disabled={
+                running ||
+                !vers ||
+                vers.length === 0 ||
+                !code.trim()
+              }
               size="sm"
             >
               {running ? '运行中…' : '运行'}
@@ -131,7 +135,7 @@ export default function PlaygroundPage() {
           <textarea
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            className="w-full h-64 rounded-lg border border-stone-700 bg-stone-950 px-4 py-3 font-mono text-sm text-stone-100 placeholder-stone-500 transition-colors focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 resize-none"
+            className="h-64 w-full resize-none rounded-lg border border-border bg-bg-base px-4 py-3 font-mono text-sm text-text-primary placeholder-text-muted transition-colors focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             placeholder="在此编写代码…"
             spellCheck={false}
           />
@@ -139,19 +143,19 @@ export default function PlaygroundPage() {
 
         {/* Output */}
         <Card className="p-5">
-          <h2 className="text-sm font-semibold text-stone-300 mb-4">输出</h2>
-          <pre className="h-64 overflow-auto rounded-lg border border-stone-800 bg-stone-950 px-4 py-3 font-mono text-sm text-stone-300 whitespace-pre-wrap break-words">
+          <h2 className="mb-4 text-sm font-semibold text-text-primary">输出</h2>
+          <pre className="h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-bg-base px-4 py-3 font-mono text-sm text-text-secondary">
             {output || '点击"运行"查看输出…'}
           </pre>
         </Card>
       </div>
 
-      {vers.length === 0 && (
-        <div className="mt-6 rounded-xl border border-stone-800 bg-stone-900 px-6 py-6 text-center">
-          <p className="text-sm text-stone-400">
+      {(!vers || vers.length === 0) && (
+        <div className="mt-6 rounded-xl border border-border bg-bg-elevated px-6 py-6 text-center">
+          <p className="text-sm text-text-secondary">
             此语言尚无可用的运行时版本。
           </p>
-          <p className="mt-1 text-sm text-stone-500">
+          <p className="mt-1 text-sm text-text-muted">
             请先在语言详情页添加版本。
           </p>
         </div>

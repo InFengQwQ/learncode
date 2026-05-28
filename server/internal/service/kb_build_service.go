@@ -13,7 +13,6 @@ import (
 	"learncode/internal/repo"
 )
 
-// KBBuildService orchestrates knowledge base construction for a language version.
 type KBBuildService struct {
 	VersionRepo   *repo.VersionRepo
 	LangRepo      *repo.LanguageRepo
@@ -25,7 +24,6 @@ type KBBuildService struct {
 	Explorer      *KBExplorer
 }
 
-// TopicSpec is a single knowledge topic returned by the LLM topic generator.
 type TopicSpec struct {
 	Topic    string `json:"topic"`
 	Scope    string `json:"scope"`
@@ -33,7 +31,6 @@ type TopicSpec struct {
 	Brief    string `json:"brief"`
 }
 
-// Build constructs the knowledge base using a layered approach.
 func (s *KBBuildService) Build(ctx context.Context, versionID string) error {
 	ver, err := s.VersionRepo.GetByID(ctx, versionID)
 	if err != nil {
@@ -61,7 +58,6 @@ func (s *KBBuildService) Build(ctx context.Context, versionID string) error {
 		}
 	}()
 
-	// Phase 1: Core knowledge (only once per language)
 	existingCore, _ := s.KnowledgeRepo.ListByScope(ctx, lang.ID, "core")
 	coreSummary := summarizeEntries(existingCore)
 	if len(existingCore) == 0 {
@@ -75,7 +71,6 @@ func (s *KBBuildService) Build(ctx context.Context, versionID string) error {
 		coreSummary = summarizeEntries(existingCore)
 	}
 
-	// Phase 2: Version knowledge (always)
 	slog.Info("building version knowledge", "language", lang.Name, "version", ver.Version)
 	verTopics, err := s.generateTopics(ctx, ver, lang)
 	if err != nil {
@@ -83,7 +78,6 @@ func (s *KBBuildService) Build(ctx context.Context, versionID string) error {
 	}
 	s.buildLayer(ctx, ver, lang, verTopics, coreSummary)
 
-	// Phase 3: Idiom knowledge (only once per language)
 	existingIdiom, _ := s.KnowledgeRepo.ListByScope(ctx, lang.ID, "idiom")
 	if len(existingIdiom) == 0 {
 		slog.Info("building idiom knowledge", "language", lang.Name)
@@ -133,7 +127,6 @@ func summarizeEntries(entries []model.KnowledgeEntry) string {
 	}
 	var lines []string
 	for _, e := range entries {
-		// Extract a brief description from the content JSON if available.
 		var content struct {
 			Description string `json:"description"`
 		}
@@ -158,9 +151,7 @@ func (s *KBBuildService) generateTopics(ctx context.Context, ver *model.Language
 		return nil, fmt.Errorf("llm service not available")
 	}
 
-	// Extract description from language source_urls (set during language init/confirm).
 	description := extractDescriptionField(lang.SourceURLs)
-	// Also extract description from existing knowledge as fallback.
 	if description == "" {
 		existing, _ := s.KnowledgeRepo.ListByLanguage(ctx, lang.ID)
 		if len(existing) > 0 {
@@ -182,7 +173,7 @@ func (s *KBBuildService) generateTopics(ctx context.Context, ver *model.Language
 		"Version":            ver.Version,
 		"CompatibilityModel": lang.CompatibilityModel,
 		"Description":        description,
-		"ExistingKnowledge":  "", // populated when building version-specific topics
+		"ExistingKnowledge":  "",
 	}
 
 	tmpl, err := llm.LoadTemplate(s.PromptDir+"/kb_topics.yaml", vars)
@@ -215,7 +206,6 @@ func (s *KBBuildService) generateTopics(ctx context.Context, ver *model.Language
 	return topics, nil
 }
 
-// extractDescriptionField extracts a "description" string from a JSONB source_urls value.
 func extractDescriptionField(sourceURLs json.RawMessage) string {
 	if len(sourceURLs) == 0 {
 		return ""
@@ -230,9 +220,6 @@ func extractDescriptionField(sourceURLs json.RawMessage) string {
 	return ""
 }
 
-// buildEntry builds a single knowledge entry.
-// Factual entries MUST go through Explorer (environment-interactive discovery).
-// Normative entries use LLM with existing factual knowledge as context.
 func (s *KBBuildService) buildEntry(ctx context.Context, ver *model.LanguageVersion, lang *model.Language, spec TopicSpec, existingCoreSummary string) (*model.KnowledgeEntry, error) {
 	if s.LLM == nil {
 		return nil, fmt.Errorf("llm service not available")
@@ -246,8 +233,6 @@ func (s *KBBuildService) buildEntry(ctx context.Context, ver *model.LanguageVers
 		if err != nil {
 			rc = executor.DefaultRuntimeConfig(lang.Slug)
 		}
-		// Same logic as Executor.Execute: Docker path only needs Image + Interpreter.
-		// Host path needs complete config (IsComplete).
 		if rc.Image == "" && !rc.IsComplete() {
 			slog.Warn("runtime not ready, skipping factual topic", "topic", spec.Topic, "version", ver.Version)
 			return nil, nil
@@ -262,7 +247,6 @@ func (s *KBBuildService) buildEntry(ctx context.Context, ver *model.LanguageVers
 		return entry, nil
 	}
 
-	// Normative entries
 	vars := map[string]string{
 		"LanguageName": lang.Name,
 		"Slug":         lang.Slug,

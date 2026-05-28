@@ -25,6 +25,7 @@ func (h *LanguageHandler) Routes(r chi.Router) {
 	r.Post("/init", h.Init)
 	r.Delete("/{id}", h.Delete)
 	r.Post("/{id}/research", h.Research)
+		r.Post("/{id}/discover-versions", h.DiscoverVersions)
 }
 
 func (h *LanguageHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +96,6 @@ func (h *LanguageHandler) Init(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Streaming mode: each pipeline step is sent as NDJSON line.
 		if r.URL.Query().Get("stream") == "true" {
 			pw, pwErr := NewProgressWriter(w)
 			if pwErr != nil {
@@ -119,7 +119,6 @@ func (h *LanguageHandler) Init(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Non-streaming mode.
 		result, err := h.InitSvc.Query(r.Context(), input.Name)
 		if err != nil {
 			RespondError(w, http.StatusInternalServerError, err.Error())
@@ -145,9 +144,6 @@ func (h *LanguageHandler) Init(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Research triggers deep multi-source resource discovery for an existing Language.
-// POST /api/v1/languages/{id}/research
-// Returns docs[], runtimes[], specs[] with authoritative URLs.
 func (h *LanguageHandler) Research(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if h.InitSvc == nil {
@@ -167,7 +163,6 @@ func (h *LanguageHandler) Research(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist research result so version creation can proceed.
 	researchJSON, _ := json.Marshal(result)
 	now := time.Now()
 	sourceJSON, _ := json.Marshal(lang.SourceURLs)
@@ -176,4 +171,42 @@ func (h *LanguageHandler) Research(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, http.StatusOK, result)
+}
+
+func (h *LanguageHandler) DiscoverVersions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if h.InitSvc == nil {
+		RespondError(w, http.StatusInternalServerError, "init service not configured")
+		return
+	}
+
+	if r.URL.Query().Get("stream") == "true" {
+		pw, pwErr := NewProgressWriter(w)
+		if pwErr != nil {
+			RespondError(w, http.StatusInternalServerError, "streaming not supported")
+			return
+		}
+		versions, err := h.InitSvc.DiscoverHistoricalVersions(r.Context(), id,
+			func(stepName, status, msg string) {
+				pw.Emit(ProgressStep{Step: stepName, Status: status, Message: msg})
+			})
+		if err != nil {
+			pw.Emit(ProgressStep{Step: "fatal", Status: "error", Message: err.Error()})
+			return
+		}
+		b, _ := json.Marshal(APIResponse{OK: true, Data: versions})
+		w.Write(b)
+		w.Write([]byte("\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		return
+	}
+
+	versions, err := h.InitSvc.DiscoverHistoricalVersions(r.Context(), id, nil)
+	if err != nil {
+		RespondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	RespondJSON(w, http.StatusOK, versions)
 }
